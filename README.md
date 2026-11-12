@@ -57,7 +57,13 @@ and performance mode in the generated live config; selecting it does not
 switch structural options until the game restarts.
 
 The original lsfg-vk conf.toml remains unchanged by the button, and the
-limiter's V12.11.26 pacing algorithm is unchanged. The game still needs
+limiter's V12.11.26 pacing algorithm is unchanged. Under Proton's read-only
+runtime mount, the first-present helper requests the bypass via the
+already-running Zeitop GUI over an authenticated local socket instead of
+trying to write inside the game container. Start the GUI with `./run.sh`
+before launching a Steam game. If the GUI is unavailable or IPC fails,
+the bounded first-present fallback may leave FG active; see
+[Frame Generation Settings](docs/FRAME_GENERATION.md) for that limitation. The game still needs
 to START through the launcher with a matching profile to initialize the
 lsfg-vk layer; it cannot be injected into an already-running process.
 The editor does not bundle lsfg-vk or Lossless Scaling. Vulkan Loader

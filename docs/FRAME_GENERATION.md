@@ -47,9 +47,10 @@ session use atomic replacement and a shared lock.
   A short first-present handshake confirms the session and leaves FG ON.
 - FG OFF at launch: the selected multiplier is temporarily kept intact
   so lsfg-vk can initialize its rendering resources. The Zeitop Vulkan
-  layer intercepts and holds the FIRST app present, runs the session
-  warmup helper, and synchronously writes multiplier = 1 (bypass) to
-  the private session configuration BEFORE forwarding that present.
+  layer intercepts and holds the FIRST app present and runs the session
+  warmup helper. With the GUI running, the helper sends an authenticated
+  local Unix datagram to the GUI, which writes multiplier = 1 (bypass)
+  to the private session configuration BEFORE the present is forwarded.
   This prevents the later 1x -> 2x freeze reproduced in vkcube.
 - FG toggling after the first present hot-reloads the same private
   session configuration, between bypass 1x and the selected multiplier.
@@ -61,6 +62,25 @@ session use atomic replacement and a shared lock.
 - The first-present helper has a bounded wait. An error or timeout
   releases the game's present with a warning instead of hanging it;
   frame generation may remain temporarily active in that failure path.
+  This failure mode remains a limitation; keep the GUI running during
+  Proton launches so IPC is available.
+
+### Proton / read-only game containers
+
+Steam Pressure Vessel may expose `runtime/` to the game as read-only.
+The first-present helper therefore sends `ZEITOP_FG_WARMUP1` over the
+existing `runtime/zeitop.sock` using an abstract reply address; it does
+not write project files from inside Proton. The GUI validates kernel Unix
+peer credentials, verifies the presenting process inherited this launch's
+random session token, updates the corresponding private TOML with the
+existing atomic lock and acknowledges completion. The Vulkan present
+only proceeds after that acknowledgement or its bounded failure path.
+No Steam, Proton or lsfg-vk files are patched, and the limiter is unchanged.
+
+Without a running GUI, direct native Linux launches use the original
+same-process warmup helper. Read-only Proton containers require the GUI
+IPC endpoint; otherwise the timeout/failure warning above applies.
+The game must still be validated separately in the real Proton runtime.
 
 The actual application-side layer order is:
 game -> Zeitop -> lsfg-vk -> driver. Explicit VK_INSTANCE_LAYERS

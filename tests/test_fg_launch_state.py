@@ -53,7 +53,7 @@ class TestIndependentFrameGenerationLaunch(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="zeitop_fg_test_", dir=ROOT / "runtime")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        for name in ("zeitop-run", "fg_live.py", "fg_config.py", "core.py"):
+        for name in ("zeitop-run", "fg_live.py", "fg_ipc.py", "fg_config.py", "core.py"):
             shutil.copy2(ROOT / name, self.root / name)
         (self.root / "runtime").mkdir()
         (self.root / "runtime/vulkan").symlink_to(ROOT / "runtime/vulkan", target_is_directory=True)

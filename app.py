@@ -4,6 +4,8 @@ import fcntl
 import json
 import os
 import socket
+import struct
+import fg_ipc
 import sys
 import time
 from pathlib import Path
@@ -32,6 +34,8 @@ def main():
             self.average_display = AverageDisplayCadence(interval_seconds=1.0)
             self.selected_pid = None
             self.sock = None
+            self.sock_watch = None
+            self.sock_channel = None
             self.lock_handle = None
             self.web = None
             self.smoke = os.environ.get("ZEITOP_SMOKE_TEST") == "1"
@@ -60,6 +64,7 @@ def main():
             if path.exists():
                 path.unlink()
             self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
             self.sock.setblocking(False)
             self.sock.bind(str(path))
             os.chmod(path, 0o600)
@@ -109,6 +114,13 @@ def main():
             settings.set_enable_developer_extras(False)
             self.window.set_child(self.web)
             self.web.load_uri((ROOT / "ui" / "index.html").as_uri())
+            # Event-driven IPC: do not add a fixed 120 ms delay to the
+            # first-present handshake. Keep the old poll as a fallback.
+            self.sock_channel = GLib.IOChannel.unix_new(self.sock.fileno())
+            self.sock_watch = GLib.io_add_watch(
+                self.sock_channel, GLib.PRIORITY_DEFAULT, GLib.IO_IN,
+                lambda _channel, _condition: self.poll()
+            )
             GLib.timeout_add(120, self.poll)
             self.window.present()
             if self.smoke:
@@ -144,6 +156,10 @@ def main():
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
 
         def on_destroy(self, *_):
+            if self.sock_watch is not None:
+                GLib.source_remove(self.sock_watch)
+                self.sock_watch = None
+            self.sock_channel = None
             if self.fg_window:
                 self.fg_window.close()
             if self.sock:
@@ -521,9 +537,13 @@ def main():
             changed = False
             for _ in range(256):
                 try:
-                    packet = self.sock.recv(128)
+                    packet, ancdata, _flags, address = self.sock.recvmsg(
+                        256, socket.CMSG_SPACE(fg_ipc.CREDS_SIZE)
+                    )
                 except BlockingIOError:
                     break
+                if fg_ipc.service_packet(self.sock, packet, address, ancdata, ROOT):
+                    continue
                 sample = parse_packet(packet)
                 if not sample:
                     continue

@@ -505,10 +505,16 @@ def cli():
             print(profile or "")
             print("1" if pending else "0")
         elif op == "warmup" and len(sys.argv) in (4, 5):
-            warmup_session(
-                root, sys.argv[3],
-                pid=int(sys.argv[4]) if len(sys.argv) == 5 else None
-            )
+            from fg_ipc import request_warmup
+            token = sys.argv[3]
+            pid = int(sys.argv[4]) if len(sys.argv) == 5 else None
+            if request_warmup(root, token):
+                if os.environ.get("ZEITOP_DEBUG"):
+                    print("ZEITOP_FG_IPC_ACK", file=sys.stderr)
+            else:
+                # Direct Linux without a running Zeitop GUI retains the
+                # original synchronous helper path for existing use/tests.
+                warmup_session(root, token, pid=pid)
         elif op == "launch" and len(sys.argv) == 3:
             _, name = prepare_live(root, mark_launch=True)
             print(name or "")
