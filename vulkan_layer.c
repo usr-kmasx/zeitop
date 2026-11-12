@@ -5,7 +5,15 @@
  */
 #define VK_NO_PROTOTYPES
 #include "vulkan/vk_layer.h"
+#include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
+#include <spawn.h>
+#include <stdbool.h>
+#include <stdatomic.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -194,10 +202,95 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device,
     if (value.destroy) value.destroy(device, allocator);
 }
 
+/* Per-process, one-shot prewarm: the app's FIRST present is held until
+ * Zeitop changes its own private lsfg-vk TOML to bypass (if FG is OFF).
+ * This is intentionally before calling the downstream lsfg-vk layer.
+ * Do not mutate the canonical ~/.config/lsfg-vk/conf.toml.
+ *
+ * posix_spawnp is used rather than fork() inside the multithreaded Vulkan
+ * process. The 2s deadline prevents deadlocking a game if the helper fails.
+ */
+static atomic_bool fg_gate_started = ATOMIC_VAR_INIT(false);
+extern char **environ;
+
+static void zeitop_fg_first_present_gate(void) {
+    const char *token = getenv("ZEITOP_FG_WARMUP_TOKEN");
+    if (!token || !*token) return;
+    if (atomic_exchange_explicit(&fg_gate_started, true, memory_order_acq_rel))
+        return;
+
+    const char *root = getenv("ZEITOP_HOME");
+    if (!root || root[0] != '/' || strlen(token) != 24) {
+        fprintf(stderr, "Zeitop FG: invalid first-present gate arguments.\n");
+        return;
+    }
+    for (const char *c = token; *c; c++) {
+        if (!((*c >= '0' && *c <= '9') || (*c >= 'a' && *c <= 'f'))) {
+            fprintf(stderr, "Zeitop FG: invalid session token.\n");
+            return;
+        }
+    }
+    char helper[4096];
+    int written = snprintf(helper, sizeof helper, "%s/fg_live.py", root);
+    if (written < 0 || (size_t)written >= sizeof helper) {
+        fprintf(stderr, "Zeitop FG: project path is too long.\n");
+        return;
+    }
+    char game_pid[32];
+    snprintf(game_pid, sizeof game_pid, "%ld", (long)getpid());
+    char *const argv[] = {
+        (char *)"python3", (char *)"-B", helper, (char *)"warmup",
+        (char *)root, (char *)token, game_pid, NULL
+    };
+    pid_t child = -1;
+    int error = posix_spawnp(&child, "python3", NULL, NULL, argv, environ);
+    if (error) {
+        fprintf(stderr, "Zeitop FG: cannot start warmup helper (%d).\n", error);
+        return;
+    }
+    struct timespec poll_delay = {.tv_sec = 0, .tv_nsec = 1000000L};
+    int status = 0;
+    for (int ms = 0; ms < 2000; ms++) {
+        pid_t finished = waitpid(child, &status, WNOHANG);
+        if (finished == child) {
+            if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+                fprintf(stderr, "Zeitop FG: first-present bypass failed.\n");
+            return;
+        }
+        if (finished < 0 && errno != EINTR) {
+            fprintf(stderr, "Zeitop FG: failed to observe warmup helper.\n");
+            return;
+        }
+        nanosleep(&poll_delay, NULL);
+    }
+    kill(child, SIGTERM); /* Never hang the Vulkan present indefinitely. */
+    (void)waitpid(child, &status, WNOHANG);
+    fprintf(stderr, "Zeitop FG: warmup timed out; releasing the present.\n");
+}
+
+#ifdef ZEITOP_PRESENT_PROBE
+/* Compiled only in test fixtures; never included in production builds.
+ * Place downstream of lsfg-vk to count generated OUTPUT presentations. */
+static void zeitop_probe_output(void) {
+    const char *path = getenv("ZEITOP_PROBE_OUTPUT");
+    if (!path || path[0] != '/') return;
+    int fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0600);
+    if (fd >= 0) {
+        (void)write(fd, "P", 1);
+        close(fd);
+    }
+}
+#endif
+
 VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
     DeviceRecord rec = find_device(dispatch_key(queue));
     if (!rec.present) return VK_ERROR_EXTENSION_NOT_PRESENT;
+#ifdef ZEITOP_PRESENT_PROBE
+    zeitop_probe_output();
+#else
+    zeitop_fg_first_present_gate();
     zeitop_before_present();
+#endif
     return rec.present(queue, info);
 }
 

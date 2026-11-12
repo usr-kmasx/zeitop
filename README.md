@@ -44,8 +44,11 @@ global settings, validation, private backups, and atomic saves.
 A separate Frame Generation icon sits immediately to the right of the
 limiter toggle. It independently switches Frame Generation for a running
 game without restarting it: zeitop-run loads the user's installed lsfg-vk
-layer even with FG OFF (multiplier 1x bypass) and the button switches the
-generated runtime config between 1x and the user's configured multiplier.
+layer with application-first Zeitop pacing, and creates a private TOML for
+each launch. When FG is OFF, a bounded first-present handshake primes
+lsfg-vk at the configured multiplier and switches to 1x bypass before the
+app's first present proceeds. The button then hot-reloads 1x vs the saved
+multiplier for the tracked game sessions.
 
 The selected profile is saved with Save Changes, persists when Settings
 reopens and is applied at game startup through LSFGVK_PROFILE. Selecting
@@ -58,8 +61,8 @@ limiter's V12.11.26 pacing algorithm is unchanged. The game still needs
 to START through the launcher with a matching profile to initialize the
 lsfg-vk layer; it cannot be injected into an already-running process.
 The editor does not bundle lsfg-vk or Lossless Scaling. Vulkan Loader
-checks show Zeitop before lsfg-vk, while real-game frame-generation cadence
-remains to be measured. See
+tracing has validated correct app -> Zeitop -> lsfg-vk ordering on vkcube
+with real FG output; Proton/Cyberpunk needs manual validation. See
 [Frame Generation Settings](docs/FRAME_GENERATION.md) for details and limits.
 
 ## Operation

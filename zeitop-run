@@ -31,53 +31,76 @@ case "$TARGET" in
   */*) ;;
   *) TARGET=$(command -v "$TARGET" 2>/dev/null || printf "%s" "$TARGET") ;;
 esac
+DIRECT_ELF32=0
 if [ -f "$TARGET" ] && command -v file >/dev/null 2>&1 &&
    file -Lb -- "$TARGET" | grep -q "ELF 32-bit"; then
   GL_HOOK="$ROOT/runtime/libzeitop-gl32.so"
+  DIRECT_ELF32=1
 fi
-# Keep the user's installed lsfg-vk implicit layer loaded EVEN when FG is OFF.
-# The layer watches a generated runtime TOML: multiplier=1 means bypass,
-# and restoring the user's canonical multipliers triggers native hot reload.
-# Never write the user's original conf.toml while switching the FG button.
-# Without a usable external configuration, fail safely to disabled FG and
-# preserve the Zeitop limiter for this game.
-if FG_PROFILE=$(python3 -B "$ROOT/fg_live.py" launch "$ROOT"); then
-  unset DISABLE_LSFGVK
-  export LSFGVK_CONFIG="$ROOT/runtime/fg-live.conf.toml"
-  # The saved preference selects a profile at game startup. An explicit
-  # caller-supplied LSFGVK_PROFILE takes precedence.
-  if [ -z "${LSFGVK_PROFILE:-}" ] && [ -n "$FG_PROFILE" ]; then
-    export LSFGVK_PROFILE="$FG_PROFILE"
+# A generated *per-launch* TOML keeps the user's canonical lsfg-vk file
+# untouched and prevents one game's FG handshake from affecting another.
+# With FG requested OFF, start the selected profile in its real multiplier
+# and block the first app present inside Zeitop's Vulkan layer. The gate
+# switches this session to 1x before releasing that present; future GUI
+# toggles hot-reload the same private file.
+FG_READY=0
+# The installed external lsfg-vk x86 layer fails Vulkan enumeration on
+# this host, so known direct 32-bit binaries safely use pacing only.
+if [ "${ZEITOP_VULKAN_STAGE2:-0}" != "1" ] && [ "$DIRECT_ELF32" != "1" ]; then
+  if FG_SESSION_OUTPUT=$(python3 -B "$ROOT/fg_live.py" session "$ROOT" "$$"); then
+    FG_READY=1
+    FG_SESSION_CONFIG=$(printf '%s\n' "$FG_SESSION_OUTPUT" | sed -n '1p')
+    FG_PROFILE=$(printf '%s\n' "$FG_SESSION_OUTPUT" | sed -n '2p')
+    FG_PENDING=$(printf '%s\n' "$FG_SESSION_OUTPUT" | sed -n '3p')
+    export LSFGVK_CONFIG="$FG_SESSION_CONFIG"
+    unset DISABLE_LSFGVK
+    if [ -z "${LSFGVK_PROFILE:-}" ] && [ -n "$FG_PROFILE" ]; then
+      export LSFGVK_PROFILE="$FG_PROFILE"
+    fi
+    if [ "$FG_PENDING" = "1" ]; then
+      ZEITOP_FG_WARMUP_TOKEN=${FG_SESSION_CONFIG##*/}
+      export ZEITOP_FG_WARMUP_TOKEN=${ZEITOP_FG_WARMUP_TOKEN%.toml}
+    fi
   fi
-else
-  export DISABLE_LSFGVK=1
-  printf '%s\n' "Zeitop: lsfg-vk cannot be prepared; only the limiter will load." >&2
 fi
-# Forcing lsfg-vk through VK_INSTANCE_LAYERS changes implicit layer
-# precedence. It defeats an OFF state and can reverse the needed
-# Zeitop -> lsfg-vk order. Refuse this unsafe external combination;
-# rely on the installed implicit layer and the user's profile matching.
-inherited_layers=$(printenv VK_INSTANCE_LAYERS 2>/dev/null || true)
-case ":$inherited_layers:" in
-  *:VK_LAYER_LSFGVK_frame_generation*:*)
-    printf '%s\n' "Zeitop: remove explicit VK_LAYER_LSFGVK_frame_generation from VK_INSTANCE_LAYERS; lsfg-vk must be implicit to preserve ordering." >&2
-    exit 2 ;;
-esac
+if [ "$FG_READY" != "1" ]; then
+  # Failures, direct ELF32 and stage2 never force an unusable FG layer.
+  export DISABLE_LSFGVK=1
+  unset ZEITOP_FG_WARMUP_TOKEN
+  printf '%s\n' "Zeitop: lsfg-vk session unavailable; only the limiter will load." >&2
+fi
+
+# Explicit layer order is application -> Zeitop -> lsfg-vk -> driver.
+# Vulkan loader diagnostics list insertion differently, but present tracing
+# proved this is the order that paces only the application's real frames.
+# Preserve unrelated layers in their inherited relative order.
 forced_layers=$(printenv VK_LOADER_LAYERS_ENABLE 2>/dev/null || true)
 case "$forced_layers" in
   *LSFGVK*|*lsfgvk*|*LSFG*|*lsfg*)
-    printf '%s\n' "Zeitop: remove forced lsfg-vk from VK_LOADER_LAYERS_ENABLE to preserve independent FG control and layer order." >&2
+    printf '%s\n' "Zeitop: remove forced lsfg-vk from VK_LOADER_LAYERS_ENABLE; the launcher manages the layer order." >&2
     exit 2 ;;
 esac
+inherited_layers=$(printenv VK_INSTANCE_LAYERS 2>/dev/null || true)
+remaining_layers=""
+old_ifs=$IFS
+IFS=:
+for layer in $inherited_layers; do
+  case "$layer" in
+    VK_LAYER_ZEITOP_pacing|VK_LAYER_LSFGVK_frame_generation|"") ;;
+    *) remaining_layers="${remaining_layers:+$remaining_layers:}$layer" ;;
+  esac
+done
+IFS=$old_ifs
+if [ "$FG_READY" = "1" ]; then
+  export VK_INSTANCE_LAYERS="VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation${remaining_layers:+:$remaining_layers}"
+else
+  export VK_INSTANCE_LAYERS="VK_LAYER_ZEITOP_pacing${remaining_layers:+:$remaining_layers}"
+fi
 export ZEITOP_HOME="$ROOT"
 if [ -n "${VK_LAYER_PATH:-}" ]; then
   export VK_LAYER_PATH="$LAYER_DIR:$VK_LAYER_PATH"
 else
   export VK_ADD_LAYER_PATH="$LAYER_DIR${VK_ADD_LAYER_PATH:+:$VK_ADD_LAYER_PATH}"
 fi
-case ":${VK_INSTANCE_LAYERS:-}:" in
-  *:VK_LAYER_ZEITOP_pacing:*) ;;
-  *) export VK_INSTANCE_LAYERS="VK_LAYER_ZEITOP_pacing${VK_INSTANCE_LAYERS:+:$VK_INSTANCE_LAYERS}" ;;
-esac
 export LD_PRELOAD="$GL_HOOK${LD_PRELOAD:+:$LD_PRELOAD}"
 exec "$@"

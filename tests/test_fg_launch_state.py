@@ -22,7 +22,8 @@ from fg_live import remember_config, remember_profile, switch_live
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV_KEYS = ("DISABLE_LSFGVK", "VK_INSTANCE_LAYERS", "ZEITOP_HOME",
-            "LD_PRELOAD", "LSFGVK_CONFIG", "LSFGVK_PROFILE")
+            "LD_PRELOAD", "LSFGVK_CONFIG", "LSFGVK_PROFILE",
+            "ZEITOP_FG_WARMUP_TOKEN")
 
 CONFIG = '''version = 2
 [global]
@@ -89,12 +90,21 @@ class TestIndependentFrameGenerationLaunch(unittest.TestCase):
                     env = json.loads(run.stdout.strip().splitlines()[-1])
                     self.assertEqual(env["ZEITOP_HOME"], str(self.root))
                     self.assertIsNone(env["DISABLE_LSFGVK"])
-                    self.assertTrue(env["VK_INSTANCE_LAYERS"].startswith("VK_LAYER_ZEITOP_pacing"))
+                    self.assertTrue(env["VK_INSTANCE_LAYERS"].startswith(
+                        "VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation"
+                    ))
                     self.assertIn("libzeitop-gl.so", env["LD_PRELOAD"])
                     live = Path(env["LSFGVK_CONFIG"])
-                    self.assertEqual(live, self.root / "runtime/fg-live.conf.toml")
+                    self.assertEqual(live.parent, self.root / "runtime/fg-sessions")
+                    self.assertTrue(live.is_file())
+                    meta = json.loads(live.with_suffix(".json").read_text())
+                    self.assertTrue(meta["pending"])
+                    self.assertEqual(env["ZEITOP_FG_WARMUP_TOKEN"],
+                                     live.stem)
                     got = tomllib.loads(live.read_text())["profile"]
-                    self.assertEqual([p["multiplier"] for p in got], [3, 2] if fg else [1, 1])
+                    # OFF starts at the real multiplier but the first present
+                    # must block until the per-process bypass has been written.
+                    self.assertEqual([p["multiplier"] for p in got], [3, 2])
                     self.assertEqual((self.root / "runtime/limit.state").read_text().strip(),
                                      "1" if limiter else "0")
                     self.assertEqual(self.config.read_bytes(), source)
@@ -134,7 +144,8 @@ class TestIndependentFrameGenerationLaunch(unittest.TestCase):
         self.assertEqual(cp.returncode, 0, cp.stderr)
         lines = cp.stdout.strip().splitlines()
         self.assertEqual(lines[0], "None")
-        self.assertEqual(tomllib.loads(Path(lines[1]).read_text())["profile"][0]["multiplier"], 1)
+        self.assertEqual(tomllib.loads(Path(lines[1]).read_text())["profile"][0]["multiplier"], 3)
+        self.assertTrue(json.loads(Path(lines[1]).with_suffix(".json").read_text())["pending"])
 
     def test_bad_config_fails_safely_without_blocking_limiter(self):
         self.config.unlink()
@@ -145,19 +156,21 @@ class TestIndependentFrameGenerationLaunch(unittest.TestCase):
         self.assertEqual(env["VK_INSTANCE_LAYERS"], "VK_LAYER_ZEITOP_pacing")
         self.assertNotIn("fg-live.conf.toml", str(env["LSFGVK_CONFIG"]))
 
-    def test_force_external_layer_is_rejected_even_when_bypassed(self):
+    def test_inherited_lsfg_layer_is_normalized_without_duplicates(self):
         for fg in (False, True):
             with self.subTest(fg=fg):
                 cp = self.run_case(True, fg, inherited={
                     "VK_INSTANCE_LAYERS": "VK_LAYER_MANGOHUD_overlay:VK_LAYER_LSFGVK_frame_generation"
                 })
-                self.assertEqual(cp.returncode, 2)
-                self.assertIn("preserve ordering", cp.stderr)
+                self.assertEqual(cp.returncode, 0, cp.stderr)
+                env = json.loads(cp.stdout.strip().splitlines()[-1])
+                self.assertEqual(env["VK_INSTANCE_LAYERS"],
+                    "VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation:VK_LAYER_MANGOHUD_overlay")
 
     def test_vk_loader_forced_enable_is_rejected(self):
         cp = self.run_case(True, False, inherited={"VK_LOADER_LAYERS_ENABLE": "*LSFGVK*"})
         self.assertEqual(cp.returncode, 2)
-        self.assertIn("independent FG control", cp.stderr)
+        self.assertIn("manages the layer order", cp.stderr)
 
     def test_preserves_unrelated_vulkan_layers(self):
         cp = self.run_case(False, True, inherited={
@@ -166,7 +179,7 @@ class TestIndependentFrameGenerationLaunch(unittest.TestCase):
         self.assertEqual(cp.returncode, 0, cp.stderr)
         env = json.loads(cp.stdout.strip().splitlines()[-1])
         self.assertEqual(env["VK_INSTANCE_LAYERS"],
-                         "VK_LAYER_ZEITOP_pacing:VK_LAYER_TEST_other")
+                         "VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation:VK_LAYER_TEST_other")
 
     def test_real_vkcube_profile_selected_without_active_in_match(self):
         """Saved next-launch profile must work without vkcube in Active In."""
@@ -323,11 +336,127 @@ class TestIndependentFrameGenerationLaunch(unittest.TestCase):
                 lsfg = "VK_LAYER_LSFGVK_frame_generation"
                 self.assertIn(zeitop, layers)
                 self.assertIn(lsfg, layers)
-                self.assertLess(layers.index(zeitop), layers.index(lsfg))
-                live = self.root / "runtime/fg-live.conf.toml"
-                got = tomllib.loads(live.read_text())["profile"]
-                if not fg:
-                    self.assertTrue(all(p["multiplier"] == 1 for p in got))
+                # Vulkan Loader logs the insertion order from driver toward
+                # app; the application-first list in the environment is
+                # the opposite (verified using caller-address tracing).
+                self.assertGreater(layers.index(zeitop), layers.index(lsfg))
+                sessions = list((self.root / "runtime/fg-sessions").glob("*.json"))
+                self.assertTrue(sessions)
+                recent = max(sessions, key=lambda x: x.stat().st_mtime_ns)
+                got = tomllib.loads(recent.with_suffix(".toml").read_text())["profile"]
+                self.assertEqual(got[0]["multiplier"], load_config(self.config)["profiles"][0]["multiplier"])
+                self.assertTrue(json.loads(recent.read_text())["pending"])
+
+    def test_real_vkcube_first_present_handshake_and_live_output(self):
+        """Check actual OUTPUT downstream of lsfg-vk, not a game's overlay."""
+        if not os.environ.get("WAYLAND_DISPLAY") or not shutil.which("vkcube"):
+            self.skipTest("Wayland / vkcube unavailable")
+        if not shutil.which("gcc"):
+            self.skipTest("C compiler unavailable")
+        if not external_fg_available():
+            self.skipTest("External lsfg-vk installation unavailable")
+        config = discover_config().read_text(encoding="utf-8")
+        log = self.root / "handshake.log"
+        config = re.sub(
+            r'(?m)^[ \\t]*log_file[ \\t]*=.*$',
+            'log_file = ' + json.dumps(str(log)), config
+        )
+        self.config.write_text(config)
+        original = self.config.read_bytes()
+        profiles = load_config(self.config)["profiles"]
+        chosen = next((p for p in profiles if p["multiplier"] == 2), None)
+        if chosen is None:
+            self.skipTest("No 2x lsfg-vk profile available")
+        remember_config(self.root, self.config)
+        remember_profile(self.root, self.config, chosen["name"])
+        (self.root / "runtime/limit.state").write_text("1\n")
+        (self.root / "runtime/fg.state").write_text("0\n")
+
+        # Probe is a separate, test-only Vulkan layer placed after lsfg-vk.
+        # The normal Zeitop binary never includes ZEITOP_PRESENT_PROBE.
+        probe_dir = self.root / "probe"
+        probe_dir.mkdir()
+        probe = probe_dir / "libpresent-probe.so"
+        build = subprocess.run([
+            "gcc", "-std=gnu11", "-O2", "-Wall", "-Wextra", "-fPIC",
+            "-shared", "-Wl,-Bsymbolic-functions",
+            "-DZEITOP_PACING_ONLY", "-DZEITOP_PRESENT_PROBE",
+            "-I" + str(ROOT / "vendor/vulkan"),
+            "-o", str(probe), str(ROOT / "vulkan_layer.c"),
+            str(ROOT / "limiter.c"), "-pthread", "-ldl"
+        ], capture_output=True, text=True, timeout=20)
+        self.assertEqual(build.returncode, 0, build.stderr)
+        (probe_dir / "VkLayer_Probe.json").write_text(json.dumps({
+            "file_format_version": "1.2.1",
+            "layer": {
+                "name": "VK_LAYER_ZEITOP_present_probe", "type": "GLOBAL",
+                "api_version": "1.4.0", "library_path": "./libpresent-probe.so",
+                "library_arch": "64", "implementation_version": "1",
+                "description": "Zeitop test-only downstream present counter"
+            }
+        }))
+        output = self.root / "downstream.presents"
+        env = dict(self.environment)
+        env["LSFGVK_PROFILE"] = chosen["name"]
+        env["VK_ADD_LAYER_PATH"] = str(probe_dir)
+        env["VK_INSTANCE_LAYERS"] = "VK_LAYER_ZEITOP_present_probe"
+        env["ZEITOP_PROBE_OUTPUT"] = str(output)
+
+        def count():
+            return output.stat().st_size if output.is_file() else 0
+
+        with (self.root / "handshake.stdout").open("wb") as out, (
+                self.root / "handshake.stderr").open("wb") as err:
+            proc = subprocess.Popen(
+                [str(self.root / "zeitop-run"), "vkcube",
+                 "--wsi", "wayland", "--width", "320", "--height", "240",
+                 "--suppress_popups"],
+                env=env, stdout=out, stderr=err,
+                cwd=self.root, start_new_session=True
+            )
+            try:
+                time.sleep(2)
+                first = count()
+                self.assertIsNone(proc.poll())
+                sessions = list((self.root / "runtime/fg-sessions").glob("*.json"))
+                self.assertEqual(len(sessions), 1)
+                session = json.loads(sessions[0].read_text())
+                self.assertFalse(session["pending"])
+                matching_index = next(
+                    i for i,p in enumerate(profiles) if p["name"] == chosen["name"]
+                )
+                self.assertEqual(tomllib.loads(
+                    sessions[0].with_suffix(".toml").read_text()
+                )["profile"][matching_index]["multiplier"], 1)
+                time.sleep(2)
+                off_delta = count() - first
+                switch_live(self.root, True)
+                time.sleep(2)
+                on_delta = count() - first - off_delta
+                switch_live(self.root, False)
+                time.sleep(2)
+                final_delta = count() - first - off_delta - on_delta
+                self.assertIsNone(proc.poll())
+                # Pacing at ~30 base FPS. Probe sees 1x during bypass,
+                # 2x after the live enable, and 1x after disable.
+                self.assertGreater(off_delta, 40)
+                self.assertLess(off_delta, 85)
+                self.assertGreater(on_delta, 90,
+                    "Hot-reload failed to produce 2x output frames")
+                self.assertLess(on_delta, 150)
+                self.assertGreater(final_delta, 40)
+                self.assertLess(final_delta, 85)
+            finally:
+                if proc.poll() is None:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                proc.wait(timeout=6)
+        events = log.read_text(errors="replace") if log.exists() else ""
+        self.assertIn("(Disabled)", events)
+        self.assertGreaterEqual(
+            events.count(f"Multiplier: {chosen['multiplier']}"), 2
+        )
+        self.assertNotIn("[ERROR]", events)
+        self.assertEqual(self.config.read_bytes(), original)
 
     def test_real_vkcube_hot_toggle_on_one_process(self):
         if not os.environ.get("WAYLAND_DISPLAY") or not shutil.which("vkcube"):

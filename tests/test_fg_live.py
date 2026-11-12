@@ -1,16 +1,19 @@
 """lsfg-vk live bypass: canonical TOML untouched, runtime copy hot-reloads."""
 import hashlib
+import json
 import os
 import stat
 import tempfile
 import tomllib
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from core import create_layout, is_enabled, is_fg_enabled, set_enabled
-from fg_live import (LiveConfigError, active_launch_profile, prepare_live,
-                     remember_config, remember_profile, render_effective,
-                     selected_profile, source_config, switch_live)
+from fg_live import (LiveConfigError, active_launch_profile, launch_session,
+                     prepare_live, remember_config, remember_profile,
+                     render_effective, selected_profile, source_config,
+                     switch_live, warmup_session)
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = '''# User's personal settings
@@ -158,6 +161,91 @@ class TestLiveFg(unittest.TestCase):
         with self.assertRaises(LiveConfigError):
             remember_profile(self.root, self.config, "Example One")
         self.assertIsNone(selected_profile(self.root, self.config))
+
+    @patch("fg_live.fg_config.external_fg_available", return_value=True)
+    def test_session_first_present_bypass_and_per_launch_isolation(self, _available):
+        remember_profile(self.root, self.config, "Example Two")
+        original = self.config.read_bytes()
+        first, name, pending = launch_session(
+            self.root, pid=os.getpid(), env=self.env
+        )
+        second, _, second_pending = launch_session(
+            self.root, pid=os.getpid(), env=self.env
+        )
+        self.assertEqual(name, "Example Two")
+        self.assertTrue(pending)
+        self.assertTrue(second_pending)
+        self.assertNotEqual(first, second)
+        self.assertEqual(first.parent, self.root / "runtime/fg-sessions")
+        self.assertEqual(tomllib.loads(first.read_text())["profile"][1]["multiplier"], 2)
+        self.assertEqual(tomllib.loads(second.read_text())["profile"][1]["multiplier"], 2)
+        token = first.stem
+        self.assertTrue(warmup_session(self.root, token))
+        self.assertEqual(tomllib.loads(first.read_text())["profile"][1]["multiplier"], 1)
+        self.assertEqual(tomllib.loads(second.read_text())["profile"][1]["multiplier"], 2)
+        self.assertFalse(json.loads(first.with_suffix(".json").read_text())["pending"])
+        self.assertTrue(json.loads(second.with_suffix(".json").read_text())["pending"])
+        # GUI ON/OFF updates both sessions; the pending one remains primed
+        # until it sees its own first presentation.
+        switch_live(self.root, True)
+        self.assertEqual(tomllib.loads(first.read_text())["profile"][1]["multiplier"], 2)
+        self.assertEqual(tomllib.loads(second.read_text())["profile"][1]["multiplier"], 2)
+        switch_live(self.root, False)
+        self.assertEqual(tomllib.loads(first.read_text())["profile"][1]["multiplier"], 1)
+        self.assertEqual(tomllib.loads(second.read_text())["profile"][1]["multiplier"], 2)
+        warmup_session(self.root, second.stem)
+        self.assertEqual(tomllib.loads(second.read_text())["profile"][1]["multiplier"], 1)
+        with self.assertRaises(LiveConfigError):
+            warmup_session(self.root, "../bad")
+        self.assertEqual(original, self.config.read_bytes())
+
+    @patch("fg_live.fg_config.external_fg_available", return_value=True)
+    def test_session_without_warmup_when_fg_pre_enabled(self, _available):
+        from core import set_fg_enabled
+        set_fg_enabled(self.root, True)
+        live, name, pending = launch_session(
+            self.root, pid=os.getpid(), env=self.env
+        )
+        self.assertTrue(pending)
+        self.assertIsNone(name)
+        self.assertEqual(tomllib.loads(live.read_text())["profile"][0]["multiplier"], 3)
+        # No bypass on the first present when the GUI remains ON.
+        self.assertTrue(warmup_session(self.root, live.stem))
+        self.assertFalse(json.loads(live.with_suffix(".json").read_text())["pending"])
+        self.assertEqual(tomllib.loads(live.read_text())["profile"][0]["multiplier"], 3)
+
+    @patch("fg_live.fg_config.external_fg_available", return_value=True)
+    def test_gui_off_before_first_present_retains_warmup(self, _available):
+        from core import set_fg_enabled
+        set_fg_enabled(self.root, True)
+        live, _, armed = launch_session(self.root, pid=os.getpid(), env=self.env)
+        self.assertTrue(armed)
+        switch_live(self.root, False)
+        self.assertEqual(tomllib.loads(live.read_text())["profile"][0]["multiplier"], 3)
+        self.assertTrue(warmup_session(self.root, live.stem, pid=os.getpid()))
+        self.assertEqual(tomllib.loads(live.read_text())["profile"][0]["multiplier"], 1)
+        switch_live(self.root, True)
+        self.assertEqual(tomllib.loads(live.read_text())["profile"][0]["multiplier"], 3)
+
+    @patch("fg_live.fg_config.external_fg_available", return_value=True)
+    def test_proton_child_can_claim_session_after_launcher_pid_exits(self, _available):
+        original = self.config.read_bytes()
+        live, _, armed = launch_session(self.root, pid=os.getpid(), env=self.env)
+        self.assertTrue(armed)
+        metadata = live.with_suffix(".json")
+        record = json.loads(metadata.read_text())
+        record["pid"] = 99999999
+        record["start"] = "exited"
+        metadata.write_text(json.dumps(record))
+        # A child inherits the unpredictable token and claims the session
+        # using its real /proc start tick even if the wrapper has exited.
+        self.assertTrue(warmup_session(self.root, live.stem, pid=os.getpid()))
+        record = json.loads(metadata.read_text())
+        self.assertEqual(record["pid"], os.getpid())
+        self.assertFalse(record["pending"])
+        switch_live(self.root, True)
+        self.assertEqual(tomllib.loads(live.read_text())["profile"][0]["multiplier"], 3)
+        self.assertEqual(self.config.read_bytes(), original)
 
     def test_invalid_original_never_changes_state_or_source(self):
         remember_config(self.root, self.config)

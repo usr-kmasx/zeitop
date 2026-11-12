@@ -2,8 +2,8 @@
 
 Status: independent Frame Generation toggle and external settings editor
 are implemented on feature/lsfg-settings. The V12.11.26 production frame
-limiter algorithm and Vulkan/OpenGL hooks remain unchanged. The game launcher
-now prepares a private, derived runtime configuration for live bypass.
+limiter algorithm remains unchanged. The Vulkan hook now adds a bounded
+first-present handshake, and each launch receives an independent live TOML.
 
 ## License and ownership
 
@@ -38,22 +38,34 @@ The limiter toggle updates runtime/limit.state and affects intercepted
 present calls in an already-running game.
 
 The FG toggle updates runtime/fg.state independently of the limiter.
-At game launch, zeitop-run always prepares runtime/fg-live.conf.toml, a
-private derived copy of the original user-owned lsfg-vk v2 config, and
-passes LSFGVK_CONFIG pointing to that runtime file. It does not set
-DISABLE_LSFGVK when the config is usable. Thus the lsfg-vk implicit layer
-can initialize when the selected game matches a configured profile.
+The launcher creates a unique lsfg-vk v2 configuration under
+runtime/fg-sessions/ for every game launch. LSFGVK_CONFIG points to that
+session file, never the user's canonical conf.toml. All writes to the
+session use atomic replacement and a shared lock.
 
-- FG OFF (default): every runtime profile gets multiplier = 1, which
-  the installed lsfg-vk treats as a bypass, without unloading the layer.
-- FG ON: runtime profile multipliers are restored directly from the
-  original canonical conf.toml (2x, 3x, 4x or other configured values).
-- Switching the button regenerates the runtime file atomically, and
-  the loaded lsfg-vk detects changes and hot-reloads the multiplier.
-- If the canonical configuration cannot be used, the launcher falls
-  back to DISABLE_LSFGVK=1 so the original limiter still works.
-- When the user edits the canonical conf.toml in Zeitop settings and
-  presses Save Changes, the running runtime file is synchronized.
+- FG ON at launch: lsfg-vk initializes at the configured multiplier.
+  A short first-present handshake confirms the session and leaves FG ON.
+- FG OFF at launch: the selected multiplier is temporarily kept intact
+  so lsfg-vk can initialize its rendering resources. The Zeitop Vulkan
+  layer intercepts and holds the FIRST app present, runs the session
+  warmup helper, and synchronously writes multiplier = 1 (bypass) to
+  the private session configuration BEFORE forwarding that present.
+  This prevents the later 1x -> 2x freeze reproduced in vkcube.
+- FG toggling after the first present hot-reloads the same private
+  session configuration, between bypass 1x and the selected multiplier.
+- All launched sessions receive GUI toggle and saved profile hot-field
+  updates independently, instead of sharing a single global output file.
+- If the canonical profile or external lsfg-vk installation cannot be
+  used, the launcher falls back to DISABLE_LSFGVK=1; the limiter remains
+  available. The experimental stage2 Vulkan backend uses that fallback.
+- The first-present helper has a bounded wait. An error or timeout
+  releases the game's present with a warning instead of hanging it;
+  frame generation may remain temporarily active in that failure path.
+
+The actual application-side layer order is:
+game -> Zeitop -> lsfg-vk -> driver. Explicit VK_INSTANCE_LAYERS
+places Zeitop before lsfg-vk; tracing verified the Zeitop hook receives
+one present per source frame, not all generated output frames.
 
 Only the original user-owned conf.toml is editable as the source of
 truth. The generated runtime copy is a temporary execution artifact,
@@ -61,9 +73,9 @@ never a second user-maintained profile configuration. Files remain inside
 ignored runtime/ and are not uploaded to GitHub.
 
 Loading the layer still requires the game to START through zeitop-run.
-The FG button cannot inject lsfg-vk into a process already started
-without the layer. In a game where it was preloaded at 1x, however, the
-toggle can activate or bypass interpolation without restarting.
+The FG button cannot inject lsfg-vk into an uninstrumented game.
+The first-present handshake primes the lsfg-vk instance before entering
+bypass, so subsequent FG toggles can enable interpolation without restarting.
 
 The FG icon remains available even when the limiter is off; the launcher
 always includes Zeitop's hooks but they perform no pacing when the limiter
@@ -110,11 +122,11 @@ The user-owned canonical config is not edited by selection alone.
 
 Changing other profile properties or the startup profile identity requires
 a game restart. Changing a profile's name/removing the one used at launch
-also requires restarting. This runtime overlay tracks the most recently
-started profile through Zeitop; multiple concurrently running games using
-different profiles are not independently managed by this single runtime
-configuration. Only the external lsfg-vk can determine successful frame
-generation and actual output FPS in an application.
+also requires restarting. Each launched game has a separate runtime TOML and saved startup profile
+identity. FG on/off in the GUI remains a global preference applied to all
+tracked sessions. The presenting process claims its session during the
+first-present handshake, which also handles Steam/Proton PID handoff.
+Only downstream presentation tracing confirms generated output frames.
 
 Live FG operation still requires the external lsfg-vk Vulkan layer to have
 loaded successfully into the game.
@@ -147,28 +159,34 @@ NEVER hardcoded into project sources or published.
 
 ## Vulkan layer ordering and validation
 
-The existing Vulkan loader chain was observed in four test combinations
-using a temporary Zeitop launcher, the user's installed lsfg-vk layer,
-an existing profile forced through LSFGVK_PROFILE for the diagnostic, and
-vulkaninfo --summary:
+Earlier documentation incorrectly treated Vulkan Loader insertion logs as
+the application-to-driver call direction. Caller-address tracing in vkcube
+established the actual original order was:
+app -> lsfg-vk -> Zeitop -> driver. Zeitop received BOTH the real and
+intermediate presents, reducing the FG 2x output from about 60 to 30 FPS
+when its 30 FPS limiter was enabled.
 
-| Limiter state | FG state | Loader result |
-| --- | --- | --- |
-| OFF | OFF | Zeitop then lsfg-vk (1x bypass) |
-| ON | OFF | Zeitop then lsfg-vk (1x bypass) |
-| OFF | ON | Zeitop then lsfg-vk (configured multiplier) |
-| ON | ON | Zeitop then lsfg-vk (configured multiplier) |
+The corrected explicit order is:
+app -> Zeitop -> lsfg-vk -> driver.
+The wrapper builds the controlled prefix
+VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation, keeping other
+inherited explicit layers afterward without duplicates. With 120 vkcube
+source frames, Zeitop now receives 120 presents rather than 240.
 
-The Zeitop layer is still present but does not pace when its live flag is
-OFF. The loader logs Zeitop before lsfg-vk in all four states when a valid
-profile is selected. With FG OFF, lsfg-vk remains loaded in bypass mode.
-This establishes ordering for the tested loader environment, NOT proof that
-a game renders more frames or has correct output frametimes.
+A first-present gate is required because merely forcing this corrected
+order revealed a separate lsfg-vk hang when starting at bypass 1x and
+enabling 2x later. The gate primes 2x and atomically switches the
+private runtime TOML to bypass before the first app present continues.
+A test-only Vulkan probe downstream of lsfg-vk verifies 1x output while
+bypassed, 2x output after enabling, then 1x output after disabling.
 
-The wrapper intentionally refuses an explicit/forced lsfg-vk layer in
-VK_INSTANCE_LAYERS or VK_LOADER_LAYERS_ENABLE, because a forced layer can
-reverse the ordering or bypass the controlled runtime configuration. Leave lsfg-vk installed as
-the user's normal implicit layer and configure active_in in conf.toml.
+The experimental stage2 backend is not FG-enabled. Disabling or
+missing the external FG layer falls back to the existing limiter.
+Known direct ELF32 launches also fall back to the limiter: the
+installed lsfg-vk x86 layer failed device enumeration in the tested
+environment. This cannot automatically detect the architecture of
+every descendant of a 64-bit Steam/Proton launcher, so 32-bit Proton
+titles require separate compatibility verification.
 
 For actual games, still verify:
 - The title uses the Vulkan path and the lsfg-vk profile matches.
@@ -189,6 +207,8 @@ No external layer binary, manifest, or system installation was modified.
 ## Testing
 
 Run the existing Python unittest suite and JavaScript syntax checks.
-Frame Generation tests work only on synthetic temporary TOML files.
-A real lsfg-vk-cli test can be done on a temporary copy of the user's
-config; the actual config must not change without pressing Save in the UI.
+Tests include isolated synthetic TOML fixtures and real vkcube +
+lsfg-vk integration tests with a temporary downstream probe. No user-owned
+config/DLL or system Vulkan manifest is modified. Cyberpunk/Proton remains
+a manual validation step; the helper's two-second failure cap and process
+handoff logic should be checked with that specific runner.
