@@ -35,16 +35,18 @@ if [ -f "$TARGET" ] && command -v file >/dev/null 2>&1 &&
    file -Lb -- "$TARGET" | grep -q "ELF 32-bit"; then
   GL_HOOK="$ROOT/runtime/libzeitop-gl32.so"
 fi
-# Frame generation uses the user's separately installed implicit lsfg-vk
-# layer. Its activation is per-process at Vulkan initialization time.
-# DISABLE_LSFGVK is a presence-based flag: even "=0" disables the layer.
-# When on, unset it; when off, explicitly set it so FG stays independent
-# of the limiter's live runtime/limit.state flag.
-FG_STATE="$ROOT/runtime/fg.state"
-if [ -r "$FG_STATE" ] && [ "$(cat "$FG_STATE")" = "1" ]; then
+# Keep the user's installed lsfg-vk implicit layer loaded EVEN when FG is OFF.
+# The layer watches a generated runtime TOML: multiplier=1 means bypass,
+# and restoring the user's canonical multipliers triggers native hot reload.
+# Never write the user's original conf.toml while switching the FG button.
+# Without a usable external configuration, fail safely to disabled FG and
+# preserve the Zeitop limiter for this game.
+if FG_LIVE_CONF=$(python3 -B "$ROOT/fg_live.py" prepare "$ROOT"); then
   unset DISABLE_LSFGVK
+  export LSFGVK_CONFIG="$FG_LIVE_CONF"
 else
   export DISABLE_LSFGVK=1
+  printf '%s\n' "Zeitop: lsfg-vk cannot be prepared; only the limiter will load." >&2
 fi
 # Forcing lsfg-vk through VK_INSTANCE_LAYERS changes implicit layer
 # precedence. It defeats an OFF state and can reverse the needed

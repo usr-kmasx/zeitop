@@ -50,7 +50,7 @@ def set_enabled(root: Path, enabled: bool) -> None:
     temp.replace(state)
 
 def is_fg_enabled(root: Path) -> bool:
-    """Requested lsfg-vk state for the next Zeitop-launched game."""
+    """Requested hot-reload state for the generated lsfg-vk runtime config."""
     try:
         return (Path(root) / "runtime" / "fg.state").read_text(encoding="ascii").strip() == "1"
     except OSError:

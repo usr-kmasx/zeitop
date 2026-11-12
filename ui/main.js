@@ -79,7 +79,7 @@
     fgPower.setAttribute('aria-pressed', String(!!state.fgEnabled));
     fgPower.setAttribute('aria-label', state.fgEnabled?'Disable lsfg-vk':'Enable lsfg-vk');
     fgPower.title = state.fgAvailable ?
-      (state.fgEnabled?'Disable FG (next game launch)':'Enable FG (next game launch)') :
+      (state.fgEnabled?'Disable Frame Generation':'Enable Frame Generation') :
       'lsfg-vk unavailable';
     const real=$('real'), avg=$('average');
     real.textContent=metric(state.real);

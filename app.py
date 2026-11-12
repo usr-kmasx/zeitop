@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import fg_config
+import fg_live
 
 from core import TARGET_MS, AverageDisplayCadence, TelemetryTracker, brand_drag_hit, create_layout, decode_message, is_enabled, is_fg_enabled, launch_option, parse_packet, set_enabled, set_fg_enabled
 
@@ -199,15 +200,17 @@ def main():
                     self.push_state()
                 elif action == "toggle_fg":
                     requested = not is_fg_enabled(ROOT)
-                    if requested and not fg_config.external_fg_available():
-                        self.send_js("window.zeitopNotice('lsfg-vk unavailable')")
+                    try:
+                        fg_live.switch_live(ROOT, requested)
+                    except (fg_config.ConfigError, OSError) as error:
+                        print(f"Zeitop FG: {error}", file=sys.stderr)
+                        self.send_js("window.zeitopNotice('FG update failed')")
                     else:
-                        set_fg_enabled(ROOT, requested)
                         self.push_state()
                         self.send_js(
                             "window.zeitopNotice('FG " +
                             ("enabled" if requested else "disabled") +
-                            " for next game launch')"
+                            "')"
                         )
                 elif action == "settings":
                     self.open_fg_settings()
@@ -369,7 +372,7 @@ def main():
 
         def _fg_load(self):
             if self.fg_config_path is None:
-                self.fg_config_path = fg_config.discover_config()
+                self.fg_config_path = fg_live.source_config(ROOT)
             state = fg_config.load_config(self.fg_config_path)
             self.fg_revision = state["revision"]
             self._fg_send({
@@ -409,6 +412,8 @@ def main():
                 self.fg_config_path = Path(path)
                 try:
                     self._fg_load()
+                    if Path(path).is_file():
+                        fg_live.remember_config(ROOT, Path(path))
                 except (fg_config.ConfigError, OSError) as error:
                     self._fg_send({"type": "error", "message": str(error)})
 
@@ -439,10 +444,25 @@ def main():
                         validator=current["cli_path"]
                     )
                     self.fg_revision = result["state"]["revision"]
+                    # The canonical file is saved by the editor; regenerate
+                    # the runtime view for games which already loaded lsfg-vk.
+                    # A failed sync must not misrepresent the saved file.
+                    sync_error = None
+                    try:
+                        fg_live.remember_config(ROOT, self.fg_config_path)
+                        fg_live.prepare_live(
+                            ROOT, source=self.fg_config_path,
+                            enabled=is_fg_enabled(ROOT)
+                        )
+                    except (fg_config.ConfigError, OSError) as error:
+                        sync_error = str(error)
                     self._fg_send({
                         "type": "saved", "state": result["state"],
                         "changed": result["changed"]
                     })
+                    if sync_error:
+                        self._fg_send({"type": "error", "message":
+                                       "Saved, but live FG sync failed: " + sync_error})
                     self.push_state()
             except (ValueError, TypeError, fg_config.ConfigError, OSError) as error:
                 self._fg_send({"type": "error", "message": str(error)})
@@ -451,13 +471,22 @@ def main():
             if self.web:
                 self.web.evaluate_javascript(script, -1, None, None, None, None, None)
 
+        def _fg_is_available(self):
+            try:
+                source = fg_live.source_config(ROOT)
+                environ = dict(os.environ)
+                environ["LSFGVK_CONFIG"] = str(source)
+                return fg_config.external_fg_available(env=environ)
+            except (fg_config.ConfigError, OSError):
+                return False
+
         def push_state(self):
             selected = self.tracker.snapshot()
             self.selected_pid = selected["pid"]
             payload = {
                 "enabled": is_enabled(ROOT),
                 "fgEnabled": is_fg_enabled(ROOT),
-                "fgAvailable": fg_config.external_fg_available(),
+                "fgAvailable": self._fg_is_available(),
                 "connected": selected["pid"] is not None,
                 "real": selected["real"],
                 "average": self.average_display.display(selected["pid"], selected["average"]),

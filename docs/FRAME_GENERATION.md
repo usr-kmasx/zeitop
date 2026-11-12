@@ -3,7 +3,7 @@
 Status: independent Frame Generation toggle and external settings editor
 are implemented on feature/lsfg-settings. The V12.11.26 production frame
 limiter algorithm and Vulkan/OpenGL hooks remain unchanged. The game launcher
-was updated to control the installed external lsfg-vk layer per process.
+now prepares a private, derived runtime configuration for live bypass.
 
 ## License and ownership
 
@@ -30,26 +30,40 @@ Zeitop Steam command:
 The Frame Generation button displays the unmodified official lsfg-vk black
 duck logo, sourced from https://lsfg-vk.dev/logo.svg (lsfg-vk project,
 PancakeTAS). The icon is not drawn or recolored by Zeitop, and its use does
-not imply endorsement. The UI supplies a neutral backing for contrast on
-dark backgrounds.
+not imply endorsement. The original SVG has a transparent background.
 
     '/absolute/path/to/zeitop/zeitop-run' %command%
 
 The limiter toggle updates runtime/limit.state and affects intercepted
 present calls in an already-running game.
 
-The FG toggle updates runtime/fg.state, which defaults to OFF. This file
-is read by zeitop-run when starting a new game process:
+The FG toggle updates runtime/fg.state independently of the limiter.
+At game launch, zeitop-run always prepares runtime/fg-live.conf.toml, a
+private derived copy of the original user-owned lsfg-vk v2 config, and
+passes LSFGVK_CONFIG pointing to that runtime file. It does not set
+DISABLE_LSFGVK when the config is usable. Thus the lsfg-vk implicit layer
+can initialize when the selected game matches a configured profile.
 
-- OFF: sets DISABLE_LSFGVK=1 in that process, preventing the external
-  implicit layer from loading, regardless of the limiter's state.
-- ON: unsets DISABLE_LSFGVK so the user's existing implicit lsfg-vk
-  layer may load if a matching profile is configured.
+- FG OFF (default): every runtime profile gets multiplier = 1, which
+  the installed lsfg-vk treats as a bypass, without unloading the layer.
+- FG ON: runtime profile multipliers are restored directly from the
+  original canonical conf.toml (2x, 3x, 4x or other configured values).
+- Switching the button regenerates the runtime file atomically, and
+  the loaded lsfg-vk detects changes and hot-reloads the multiplier.
+- If the canonical configuration cannot be used, the launcher falls
+  back to DISABLE_LSFGVK=1 so the original limiter still works.
+- When the user edits the canonical conf.toml in Zeitop settings and
+  presses Save Changes, the running runtime file is synchronized.
 
-**FG toggling is for the next game launch, not a live layer attach/detach.**
-A game that was already running retains the Vulkan layers it initialized.
-The hot-reloadable values of the active profile are separate from enabling
-or disabling the layer itself.
+Only the original user-owned conf.toml is editable as the source of
+truth. The generated runtime copy is a temporary execution artifact,
+never a second user-maintained profile configuration. Files remain inside
+ignored runtime/ and are not uploaded to GitHub.
+
+Loading the layer still requires the game to START through zeitop-run.
+The FG button cannot inject lsfg-vk into a process already started
+without the layer. In a game where it was preloaded at 1x, however, the
+toggle can activate or bypass interpolation without restarting.
 
 The FG icon remains available even when the limiter is off; the launcher
 always includes Zeitop's hooks but they perform no pacing when the limiter
@@ -124,19 +138,20 @@ vulkaninfo --summary:
 
 | Limiter state | FG state | Loader result |
 | --- | --- | --- |
-| OFF | OFF | lsfg-vk not loaded |
-| ON | OFF | lsfg-vk not loaded |
-| OFF | ON | Zeitop then lsfg-vk |
-| ON | ON | Zeitop then lsfg-vk |
+| OFF | OFF | Zeitop then lsfg-vk (1x bypass) |
+| ON | OFF | Zeitop then lsfg-vk (1x bypass) |
+| OFF | ON | Zeitop then lsfg-vk (configured multiplier) |
+| ON | ON | Zeitop then lsfg-vk (configured multiplier) |
 
 The Zeitop layer is still present but does not pace when its live flag is
-OFF. In the two ON cases, the loader logged the Zeitop layer before lsfg-vk.
+OFF. The loader logs Zeitop before lsfg-vk in all four states when a valid
+profile is selected. With FG OFF, lsfg-vk remains loaded in bypass mode.
 This establishes ordering for the tested loader environment, NOT proof that
 a game renders more frames or has correct output frametimes.
 
 The wrapper intentionally refuses an explicit/forced lsfg-vk layer in
 VK_INSTANCE_LAYERS or VK_LOADER_LAYERS_ENABLE, because a forced layer can
-reverse the ordering or bypass the OFF flag. Leave lsfg-vk installed as
+reverse the ordering or bypass the controlled runtime configuration. Leave lsfg-vk installed as
 the user's normal implicit layer and configure active_in in conf.toml.
 
 For actual games, still verify:

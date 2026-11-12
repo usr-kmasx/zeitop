@@ -48,10 +48,10 @@ class TestFgMainUi(unittest.TestCase):
         app = (ROOT / "app.py").read_text(encoding="utf-8")
         core = (ROOT / "core.py").read_text(encoding="utf-8")
         self.assertIn('elif action == "toggle_fg":', app)
-        self.assertIn("set_fg_enabled(ROOT, requested)", app)
-        self.assertIn("if requested and not fg_config.external_fg_available()", app)
+        self.assertIn("fg_live.switch_live(ROOT, requested)", app)
+        self.assertIn("fg_live.prepare_live(", app)
         self.assertIn('"fgEnabled": is_fg_enabled(ROOT)', app)
-        self.assertIn('"fgAvailable": fg_config.external_fg_available()', app)
+        self.assertIn('"fgAvailable": self._fg_is_available()', app)
         self.assertIn('{"toggle", "toggle_fg", "copy", "close", "settings"}', core)
         # The production limiter cannot be modified as part of this feature.
         self.assertIn('if action == "toggle":', app)
