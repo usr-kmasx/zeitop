@@ -27,6 +27,12 @@ The top bar has two separate icons: the original frame limiter and, directly
 to its right, lsfg-vk Frame Generation. Both work with the same existing
 Zeitop Steam command:
 
+The Frame Generation button displays the unmodified official lsfg-vk black
+duck logo, sourced from https://lsfg-vk.dev/logo.svg (lsfg-vk project,
+PancakeTAS). The icon is not drawn or recolored by Zeitop, and its use does
+not imply endorsement. The UI supplies a neutral backing for contrast on
+dark backgrounds.
+
     '/absolute/path/to/zeitop/zeitop-run' %command%
 
 The limiter toggle updates runtime/limit.state and affects intercepted
