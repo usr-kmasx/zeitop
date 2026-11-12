@@ -35,6 +35,17 @@ Or prefix a runner command:
 
 The game needs to start through this wrapper. Zeitop cannot attach to a game that is already running without it.
 
+## Frame Generation Settings (external lsfg-vk)
+
+The Settings gear opens a separate window for editing an existing lsfg-vk
+version 2 configuration. It supports profiles, a user-owned DLL file picker,
+global settings, validation, private backups, and atomic saves.
+
+The editor does not bundle lsfg-vk or Lossless Scaling, enable their layer,
+or promise any combined frame-generation order with the limiter. The existing
+V12.11.26 limiter remains unchanged. See
+[Frame Generation Settings](docs/FRAME_GENERATION.md) for details and limits.
+
 ## Operation
 
 - **Vulkan:** A process-local explicit Vulkan layer uses the `VK_ADD_LAYER_PATH` (or existing `VK_LAYER_PATH`) and `VK_INSTANCE_LAYERS` environment variables. Both 32-bit and 64-bit layer manifests and libraries are stored inside `runtime/vulkan/`.

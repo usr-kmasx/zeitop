@@ -13,7 +13,7 @@
   }
   power.addEventListener('click', () => post('toggle'));
   $('copy').addEventListener('click', () => post('copy'));
-  $('settings').addEventListener('click', () => zeitopNotice('Settings coming soon'));
+  $('settings').addEventListener('click', () => post('settings'));
   $('close').addEventListener('click', () => post('close'));
 
   // The WebView is an app UI, not a selectable web page.

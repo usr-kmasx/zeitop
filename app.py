@@ -8,6 +8,8 @@ import sys
 import time
 from pathlib import Path
 
+import fg_config
+
 from core import TARGET_MS, AverageDisplayCadence, TelemetryTracker, brand_drag_hit, create_layout, decode_message, is_enabled, launch_option, parse_packet, set_enabled
 
 ROOT = Path(__file__).resolve().parent
@@ -32,6 +34,11 @@ def main():
             self.lock_handle = None
             self.web = None
             self.smoke = os.environ.get("ZEITOP_SMOKE_TEST") == "1"
+            self.fg_smoke = os.environ.get("ZEITOP_FG_SMOKE_TEST") == "1"
+            self.fg_window = None
+            self.fg_web = None
+            self.fg_config_path = None
+            self.fg_revision = None
 
         def do_activate(self):
             if self.props.active_window:
@@ -102,6 +109,9 @@ def main():
             self.window.present()
             if self.smoke:
                 GLib.idle_add(self.smoke_check_drag_ready)
+            if self.fg_smoke:
+                GLib.timeout_add(350, self._fg_smoke_open)
+                GLib.timeout_add(3000, self._fg_smoke_finish)
 
         def smoke_check_drag_ready(self):
             surface = self.window.get_surface()
@@ -125,6 +135,8 @@ def main():
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
 
         def on_destroy(self, *_):
+            if self.fg_window:
+                self.fg_window.close()
             if self.sock:
                 self.sock.close()
                 self.sock = None
@@ -177,6 +189,8 @@ def main():
                 if action == "toggle":
                     set_enabled(ROOT, not is_enabled(ROOT))
                     self.push_state()
+                elif action == "settings":
+                    self.open_fg_settings()
                 elif action == "copy":
                     cmd = launch_option(ROOT)
                     clipboard = Gdk.Display.get_default().get_clipboard()
@@ -201,6 +215,171 @@ def main():
                     self.window.close()
             except (ValueError, TypeError, AttributeError) as err:
                 print(f"Zeitop bridge: {err}", file=sys.stderr)
+
+        def _fg_smoke_open(self):
+            self.open_fg_settings()
+            return False
+
+        def _fg_smoke_finish(self):
+            if self.fg_window:
+                self.fg_window.close()
+            if self.window:
+                self.window.close()
+            print("ZEITOP_FG_SMOKE_CLOSE_OK", flush=True)
+            return False
+
+        def open_fg_settings(self):
+            if self.fg_window:
+                self.fg_window.present()
+                return
+            window = Gtk.Window()
+            window.set_title(f"Zeitop {VERSION} - Frame Generation Settings")
+            window.set_transient_for(self.window)
+            window.set_modal(False)
+            window.set_resizable(False)
+            window.set_decorated(False)
+            window.set_default_size(840, 618)
+            window.set_size_request(840, 618)
+            window.add_css_class("zeitop-fg-window")
+            self.fg_drag = Gtk.GestureClick.new()
+            self.fg_drag.set_button(1)
+            self.fg_drag.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            self.fg_drag.connect("pressed", self.on_fg_drag_press)
+            window.add_controller(self.fg_drag)
+            provider = Gtk.CssProvider()
+            provider.load_from_string("""
+                window.zeitop-fg-window, window.zeitop-fg-window > * {
+                    background-color: transparent;
+                    background-image: none;
+                    box-shadow: none;
+                    border: none;
+                }
+            """)
+            Gtk.StyleContext.add_provider_for_display(
+                Gdk.Display.get_default(), provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+            manager = WebKit.UserContentManager()
+            manager.register_script_message_handler("zeitopSettings")
+            manager.connect("script-message-received::zeitopSettings",
+                            self.on_fg_message)
+            web = WebKit.WebView(user_content_manager=manager)
+            bg = Gdk.RGBA()
+            bg.parse("rgba(21, 24, 28, 0)")
+            web.set_background_color(bg)
+            web.connect("context-menu", lambda *_: True)
+            web.get_settings().set_enable_developer_extras(False)
+            self.fg_window = window
+            self.fg_web = web
+            window.set_child(web)
+            window.connect("destroy", self._fg_closed)
+            web.load_uri((ROOT / "ui" / "fg-settings.html").as_uri())
+            window.present()
+
+        def on_fg_drag_press(self, gesture, _n_press, x, y):
+            # Preserve the undecorated window's native Wayland move gesture
+            # only over the title area (not over form controls or Close).
+            if not (0 <= y <= 47 and 0 <= x < 760):
+                return
+            if not self.fg_window:
+                return
+            surface = self.fg_window.get_surface()
+            device = gesture.get_device()
+            event = gesture.get_last_event(None)
+            if not surface or not isinstance(surface, Gdk.Toplevel) or not device or not event:
+                return
+            surface.begin_move(device, 1, x, y, event.get_time())
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+
+        def _fg_closed(self, *_):
+            self.fg_window = None
+            self.fg_web = None
+
+        def _fg_send(self, message: dict):
+            if self.fg_web:
+                encoded = json.dumps(message, allow_nan=False)
+                self.fg_web.evaluate_javascript(
+                    "window.zeitopFgResponse(" + encoded + ")",
+                    -1, None, None, None, None, None
+                )
+
+        def _fg_load(self):
+            if self.fg_config_path is None:
+                self.fg_config_path = fg_config.discover_config()
+            state = fg_config.load_config(self.fg_config_path)
+            self.fg_revision = state["revision"]
+            self._fg_send({
+                "type": "state", "state": state,
+                "status": fg_config.runtime_status(self.fg_config_path)
+            })
+            if self.fg_smoke:
+                print("ZEITOP_FG_SMOKE_CONFIG_READY", flush=True)
+
+        def _fg_choose_file(self, kind):
+            if not self.fg_window:
+                return
+            dialog = Gtk.FileDialog.new()
+            dialog.set_title("Select lsfg-vk.dll" if kind == "dll"
+                             else "Select lsfg-vk conf.toml")
+            dialog.open(
+                self.fg_window, None,
+                lambda source, result: self._fg_file_selected(source, result, kind)
+            )
+
+        def _fg_file_selected(self, dialog, result, kind):
+            try:
+                selected = dialog.open_finish(result)
+            except GLib.Error as error:
+                # GTK cancellation is not a configuration error.
+                if error.matches(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED):
+                    return
+                self._fg_send({"type": "error", "message": str(error)})
+                return
+            path = selected.get_path() if selected else None
+            if not path:
+                return
+            if kind == "dll":
+                self._fg_send({"type": "picked_dll", "path": path})
+            else:
+                self.fg_config_path = Path(path)
+                try:
+                    self._fg_load()
+                except (fg_config.ConfigError, OSError) as error:
+                    self._fg_send({"type": "error", "message": str(error)})
+
+        def on_fg_message(self, _manager, value):
+            try:
+                data = json.loads(value.to_string())
+                if not isinstance(data, dict):
+                    return
+                action = data.get("action")
+                if action == "fg_load":
+                    self._fg_load()
+                elif action == "fg_choose_dll":
+                    self._fg_choose_file("dll")
+                elif action == "fg_choose_config":
+                    self._fg_choose_file("config")
+                elif action == "fg_close":
+                    if self.fg_window:
+                        self.fg_window.close()
+                elif action == "fg_save":
+                    if self.fg_config_path is None:
+                        raise fg_config.ConfigError("No configuration selected.")
+                    if data.get("revision") != self.fg_revision:
+                        raise fg_config.ConfigError("Configuration changed. Reload before saving.")
+                    current = fg_config.runtime_status(self.fg_config_path)
+                    result = fg_config.save_config(
+                        self.fg_config_path, data.get("settings"),
+                        self.fg_revision,
+                        validator=current["cli_path"]
+                    )
+                    self.fg_revision = result["state"]["revision"]
+                    self._fg_send({
+                        "type": "saved", "state": result["state"],
+                        "changed": result["changed"]
+                    })
+            except (ValueError, TypeError, fg_config.ConfigError, OSError) as error:
+                self._fg_send({"type": "error", "message": str(error)})
 
         def send_js(self, script):
             if self.web:

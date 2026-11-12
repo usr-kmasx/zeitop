@@ -23,7 +23,7 @@ def decode_message(value):
     if not isinstance(data, dict):
         return None
     action = data.get("action")
-    return action if action in {"toggle", "copy", "close"} else None
+    return action if action in {"toggle", "copy", "close", "settings"} else None
 
 def create_layout(root: Path) -> None:
     folder = Path(root) / "runtime"

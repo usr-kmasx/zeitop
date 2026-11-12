@@ -11,9 +11,9 @@ class TestEnglishInterface(unittest.TestCase):
         self.assertIn('lang="en"',html)
         self.assertIn('aria-label="Frame-time history graph"', html)
         self.assertFalse(re.search(r"[À-ÖØ-öø-ÿ]", html), "Accented UI string remains")
-        for token in ("FT AVERAGE","TARGET","WAITING FOR GAME","LAST 100 SAMPLES","Frame-time graph","Enable limiter","Copy Steam launch command","Settings (coming soon)"):
+        for token in ("FT AVERAGE","TARGET","WAITING FOR GAME","LAST 100 SAMPLES","Frame-time graph","Enable limiter","Copy Steam launch command","Frame Generation Settings"):
             self.assertIn(token,html)
-        for token in ("GAME CONNECTED","WAITING FOR GAME","Settings coming soon","Run Zeitop as a desktop app","Disable limiter","Enable limiter"):
+        for token in ("GAME CONNECTED","WAITING FOR GAME","post('settings')","Run Zeitop as a desktop app","Disable limiter","Enable limiter"):
             self.assertIn(token,js)
         self.assertIn("Command copied",app)
         for text in (html,js,app):
