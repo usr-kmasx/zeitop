@@ -21,6 +21,9 @@ class TestFgMainUi(unittest.TestCase):
         icon = ROOT / "ui/assets/lsfg-vk-logo.svg"
         self.assertIn('class="fg-icon" src="assets/lsfg-vk-logo.svg"', html)
         self.assertIn(".fg-toggle .fg-icon", css)
+        self.assertIn("display:block;width:20px;height:20px;object-fit:contain", css)
+        self.assertNotIn("background:#eef0eb", css)
+        self.assertNotIn("padding:1px", css)
         data = icon.read_bytes()
         from hashlib import sha256
         self.assertEqual(
