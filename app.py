@@ -35,6 +35,9 @@ def main():
             self.web = None
             self.smoke = os.environ.get("ZEITOP_SMOKE_TEST") == "1"
             self.fg_smoke = os.environ.get("ZEITOP_FG_SMOKE_TEST") == "1"
+            self.fg_reopen_smoke = os.environ.get("ZEITOP_FG_REOPEN_TEST") == "1"
+            self.fg_ready_count = 0
+            self.fg_destroy_count = 0
             self.fg_window = None
             self.fg_web = None
             self.fg_config_path = None
@@ -112,6 +115,11 @@ def main():
             if self.fg_smoke:
                 GLib.timeout_add(350, self._fg_smoke_open)
                 GLib.timeout_add(3000, self._fg_smoke_finish)
+            if self.fg_reopen_smoke:
+                GLib.timeout_add(400, self._fg_reopen_first)
+                GLib.timeout_add(1650, self._fg_reopen_close)
+                GLib.timeout_add(2550, self._fg_reopen_second)
+                GLib.timeout_add(4000, self._fg_reopen_finish)
 
         def smoke_check_drag_ready(self):
             surface = self.window.get_surface()
@@ -216,6 +224,41 @@ def main():
             except (ValueError, TypeError, AttributeError) as err:
                 print(f"Zeitop bridge: {err}", file=sys.stderr)
 
+        def _fg_reopen_first(self):
+            self.send_js("document.getElementById('settings').click()")
+            return False
+
+        def _fg_reopen_close(self):
+            if self.fg_web:
+                self.fg_web.evaluate_javascript(
+                    "document.getElementById('fg-close').click()",
+                    -1, None, None, None, None, None
+                )
+            return False
+
+        def _fg_reopen_second(self):
+            self.send_js("document.getElementById('settings').click()")
+            return False
+
+        def _fg_reopen_finish(self):
+            visible = bool(self.fg_window and self.fg_window.is_visible())
+            print(
+                "ZEITOP_FG_REOPEN_DIAGNOSTIC "
+                f"config_ready={self.fg_ready_count} "
+                f"destroyed={self.fg_destroy_count} "
+                f"visible={visible}",
+                flush=True,
+            )
+            if self.fg_ready_count >= 2 and self.fg_destroy_count >= 1 and visible:
+                print("ZEITOP_FG_REOPEN_OK", flush=True)
+            else:
+                print("ZEITOP_FG_REOPEN_FAIL", flush=True)
+            if self.fg_window:
+                self.fg_window.close()
+            if self.window:
+                self.window.close()
+            return False
+
         def _fg_smoke_open(self):
             self.open_fg_settings()
             return False
@@ -272,7 +315,10 @@ def main():
             self.fg_window = window
             self.fg_web = web
             window.set_child(web)
-            window.connect("destroy", self._fg_closed)
+            # GTK4 can destroy the window without emitting a usable
+            # destroy callback. Clear references on close-request before
+            # GTK actually disposes the native window.
+            window.connect("close-request", self._fg_close_requested)
             web.load_uri((ROOT / "ui" / "fg-settings.html").as_uri())
             window.present()
 
@@ -291,9 +337,15 @@ def main():
             surface.begin_move(device, 1, x, y, event.get_time())
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
 
-        def _fg_closed(self, *_):
-            self.fg_window = None
-            self.fg_web = None
+        def _fg_close_requested(self, window):
+            if self.fg_window is window:
+                self.fg_destroy_count += 1
+                self.fg_window = None
+                self.fg_web = None
+                self.fg_drag = None
+                # Let GTK4 finish destroying the window. A subsequent click
+                # creates a fresh window and user content manager.
+            return False
 
         def _fg_send(self, message: dict):
             if self.fg_web:
@@ -312,6 +364,7 @@ def main():
                 "type": "state", "state": state,
                 "status": fg_config.runtime_status(self.fg_config_path)
             })
+            self.fg_ready_count += 1
             if self.fg_smoke:
                 print("ZEITOP_FG_SMOKE_CONFIG_READY", flush=True)
 

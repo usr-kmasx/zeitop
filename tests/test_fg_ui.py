@@ -44,6 +44,26 @@ class TestFrameGenerationWindow(unittest.TestCase):
             self.assertFalse(re.search(r"[À-ÖØ-öø-ÿ]", content))
             self.assertNotRegex(content, r"Configurações|Copiar|Desativar|Fechar|Alvo")
 
+    def test_settings_close_and_reopen_in_same_process(self):
+        """Regression for settings not opening again until restarting Zeitop."""
+        if not os.environ.get("WAYLAND_DISPLAY"):
+            self.skipTest("Wayland is unavailable")
+        lock = ROOT / "runtime" / "zeitop.lock"
+        if lock.is_file():
+            with lock.open("rb") as f:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    self.skipTest("Main Zeitop window already running")
+                else:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        env = dict(os.environ, ZEITOP_FG_REOPEN_TEST="1",
+                   PYTHONDONTWRITEBYTECODE="1")
+        cp = subprocess.run([str(ROOT / "run.sh")], env=env, cwd=ROOT,
+                            capture_output=True, text=True, timeout=15)
+        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        self.assertIn("ZEITOP_FG_REOPEN_OK", cp.stdout, cp.stdout + cp.stderr)
+
     def test_gui_smoke_reads_configuration_without_editing_it(self):
         if not os.environ.get("WAYLAND_DISPLAY"):
             self.skipTest("Wayland is unavailable")
