@@ -13,27 +13,25 @@ Run:
 
 The first run compiles 32-bit and 64-bit libraries into the local `runtime/` directory, with the existing system compiler. Zeitop does not install system packages. Keep the desktop window open to see telemetry and change the limiter state.
 
-## Steam games, including Proton
+## Launch games with Zeitop
 
-This is a portable example. Replace the placeholder with the path where you cloned Zeitop, or use the app's **Copy** button to generate the exact command automatically (computed from your installation directory):
-
-Steam launch option:
-
-    '/absolute/path/to/zeitop/zeitop-run' %command%
-
-Paste the command into the game's launch options yourself **before starting the game**. The power button then enables or disables pacing without restarting that instrumented game process.
-
-## Games outside Steam
-
-Use the project launcher as a prefix:
+Zeitop is launcher-independent: it can wrap native executables or a game runner. Use the absolute path to the project, not the literal placeholder:
 
     /absolute/path/to/zeitop/zeitop-run /path/to/game arg1 arg2
 
-Or prefix a runner command:
+For Wine, UMU, Proton or another launcher, place `zeitop-run` before the runner's actual command:
 
     /absolute/path/to/zeitop/zeitop-run /path/to/runner /path/to/game
 
-The game needs to start through this wrapper. Zeitop cannot attach to a game that is already running without it.
+The command must start the game through Zeitop. It cannot attach hooks to an already-running game. Keep the GUI open for telemetry and for the frame-generation handshake in read-only game containers.
+
+### Steam launch options (optional)
+
+The app's **Copy** button supplies the exact Steam command (computed from your installation directory). A portable example is:
+
+    '/absolute/path/to/zeitop/zeitop-run' %command%
+
+Paste it into the game's launch options *before* launching. `%command%` is Steam-specific; do not use it for standalone games or other runners.
 
 ## Frame Generation Settings (external lsfg-vk)
 
@@ -56,20 +54,20 @@ another profile while the game is open updates its multiplier, flow scale
 and performance mode in the generated live config; selecting it does not
 switch structural options until the game restarts.
 
-The original lsfg-vk conf.toml remains unchanged by the button, and the
-limiter's V12.11.26 pacing algorithm is unchanged. Under Proton's read-only
-runtime mount, the first-present helper requests the bypass via the
-already-running Zeitop GUI over an authenticated local socket instead of
-trying to write inside the game container. Start the GUI with `./run.sh`
-before launching a Steam game. If the GUI is unavailable or IPC fails,
-the bounded first-present fallback may leave FG active; see
-[Frame Generation Settings](docs/FRAME_GENERATION.md) for that limitation. The game still needs
-to START through the launcher with a matching profile to initialize the
-lsfg-vk layer; it cannot be injected into an already-running process.
-The editor does not bundle lsfg-vk or Lossless Scaling. Vulkan Loader
-tracing has validated correct app -> Zeitop -> lsfg-vk ordering on vkcube
-with real FG output; Proton/Cyberpunk needs manual validation. See
-[Frame Generation Settings](docs/FRAME_GENERATION.md) for details and limits.
+Live FG toggling changes only a private per-launch configuration; it does
+not edit the user's original lsfg-vk `conf.toml`. The original
+V12.11.26 limiter algorithm is unchanged. With a read-only game container,
+the first-present helper asks the open Zeitop GUI to update that private
+configuration over an authenticated local socket. If the GUI is absent or
+the handshake fails, the bounded fallback can temporarily leave FG active.
+
+The wrapper must load the external lsfg-vk layer at game startup; the FG
+button cannot inject it into an existing process. The editor does not
+bundle lsfg-vk or Lossless Scaling. The ordering
+`game -> Zeitop -> lsfg-vk -> driver` was validated with real Vulkan
+presentations; operation through a Proton runner was also confirmed in a
+game test. Compatibility still varies by title and runner.
+See [Frame Generation Settings](docs/FRAME_GENERATION.md) for details.
 
 ## Operation
 
@@ -87,19 +85,21 @@ with real FG output; Proton/Cyberpunk needs manual validation. See
 - Pacing can delay frames that are ready early. **It cannot accelerate frames that are already late or guarantee that no measured frametime ever exceeds 33.333 ms.** Scheduling, shaders, CPU/GPU load, vsync, and the display can introduce delays.
 - Vulkan, Proton, Steam Runtime, and anti-cheat compatibility vary by game. Games whose launchers discard environment variables or whose rendering path bypasses the hooks may not be detected. Avoid anti-cheat games while compatibility is unverified.
 - Systems without a matching 32-bit Vulkan GPU driver cannot run 32-bit Vulkan games using that driver, even if the 32-bit Vulkan loader and Zeitop layer are present. Zeitop does not install graphics drivers.
-- The production Vulkan layer was verified loaded into a running Mortal Kombat 11 (Proton-CachyOS) process, and the user confirmed that Zeitop and MangoHud behaved as expected. A frame-by-frame MangoHud CSV for that game session was not captured; broad Proton compatibility is not established.
+- The Vulkan pacing and FG chain have been tested in a game via Proton, but that does not establish compatibility with every title, graphics API or runner.
+- Direct native 32-bit Vulkan applications can use the limiter and frame-time telemetry when a matching 32-bit Vulkan driver is installed. FG remains disabled for directly detected ELF32 executables because the external 32-bit FG layer has not been validated.
 - The actual frame interval may exceed the target even after the more precise timer change. Never clamp telemetry values in the UI.
 
 ## Testing
 
 For measured Vulkan workload comparisons, independent MangoHud results, and the Proton game-validation protocol, see `docs/VALIDATION.md`. The experimental controller remains opt-in while game compatibility is unverified.
 
-The project also includes isolated tests using actual Vulkan presentation timestamps and independent MangoHud logging. See `runtime/stage3/RESULTS.md` for the observed driver intervals (16.726 ms without targeting, 33.451 ms when requesting 33.333 ms). This mechanism has **not** been enabled for games by default.
+The project also contains separate experimental Vulkan presentation-timing and independent MangoHud measurement tests. Their methodology and limitations are summarized in [validation](docs/VALIDATION.md). Detailed run files stay in ignored `runtime/` and are not shipped with the repository. Experimental driver-targeted presentation scheduling is **not** enabled for games by default.
 
     PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
     node --check ui/main.js
+    node --check ui/fg-settings.js
 
-Tests cover state toggling, the GTK/WebKit bridge, GUI controls, multiple PIDs, process-launch environment inheritance, 32/64-bit Vulkan layers, real `vkcube` presentation measurements, timer precision, one-second average-display cadence, and English-only GUI strings.
+Tests cover state toggling, the GTK/WebKit bridge, GUI controls, multiple PIDs, process-launch environment inheritance, 32/64-bit Vulkan layers, real `vkcube` presentation measurements, first-present IPC, frame-generation output and pacing, timer precision, one-second average-display cadence, and English-only GUI strings. See [validation](docs/VALIDATION.md) for the distinction between production results and the separate experimental controller.
 
 ## Project layout
 

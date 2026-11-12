@@ -12,11 +12,13 @@ Release date: November 12, 2026.
 
 ## Compatibility and validation
 
-- Cyberpunk 2077 through Proton: the user confirmed FG and limiter operation after the IPC fix.
-- A real Vulkan downstream presentation probe measured approximately 30 presented frames/s at 1× with the limiter on and 60 presented frames/s at 2× with the limiter on, without a frame-generation pacing regression.
-- Direct native 32-bit Vulkan presentation and Zeitop GUI frame-time telemetry were validated on an AMD Radeon RX 580 after installation of the 32-bit RADV driver. The same wrapper supports native 64-bit Vulkan workloads.
-- Mortal Kombat 11 running through Proton-CachyOS was previously inspected with the production Zeitop Vulkan library and MangoHud loaded.
-- The automated regression and integration suite passed 108 tests during development of the IPC fix. Repeat the suite for this release.
+- A game tested through Proton was confirmed to support independent FG and limiter control after the IPC change. Compatibility remains dependent on each title and runner.
+- A downstream Vulkan presentation probe measured approximately 30 presented frames/s with the limiter enabled and FG bypassed (1×), versus 60 presented frames/s with the limiter enabled and FG active at 2×. Generated frames were not re-limited by Zeitop in that test.
+- Direct native 32-bit Vulkan presentations and Zeitop GUI frame-time telemetry were validated with a compatible 32-bit Vulkan GPU driver. This is separate from support for 32-bit FG, which remains unvalidated.
+- Release validation completed: **108 automated tests, zero failures, five skips**, plus JavaScript syntax and interface checks. Test counts reflect the release preparation environment; other systems may skip different integration tests.
+
+The release records generic validation findings only. No device identifiers,
+personal paths, local configuration, game logs or system reports are included.
 
 ## Important limitations
 

@@ -14,7 +14,8 @@ class TestReleaseMetadata(unittest.TestCase):
         self.assertIn(RELEASE, (ROOT / "README.md").read_text(encoding="utf-8"))
         notes = (ROOT / "docs" / "RELEASE_NOTES.md").read_text(encoding="utf-8")
         self.assertIn("# Zeitop " + RELEASE, notes)
-        self.assertIn("Mortal Kombat 11", notes)
+        self.assertIn("Frame Generation", notes)
+        self.assertIn("32-bit Vulkan", notes)
 
     def test_desktop_window_uses_canonical_version(self):
         app = (ROOT / "app.py").read_text(encoding="utf-8")

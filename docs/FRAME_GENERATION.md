@@ -1,9 +1,8 @@
 # Frame Generation settings — external lsfg-vk 2.x
 
-Status: independent Frame Generation toggle and external settings editor
-are implemented on feature/lsfg-settings. The V12.11.26 production frame
-limiter algorithm remains unchanged. The Vulkan hook now adds a bounded
-first-present handshake, and each launch receives an independent live TOML.
+Status: included in Zeitop V12-1.11.26 on the main branch. The original
+V12.11.26 frame-limiter algorithm remains unchanged. The Vulkan hook adds a
+bounded first-present handshake, and each launch gets a private live TOML.
 
 ## License and ownership
 
@@ -23,16 +22,24 @@ Authoritative references:
 
 ## Independent toggles in the main window
 
-The top bar has two separate icons: the original frame limiter and, directly
-to its right, lsfg-vk Frame Generation. Both work with the same existing
-Zeitop Steam command:
+The top bar has two independent icons: the frame limiter and, to its
+right, lsfg-vk Frame Generation. Both use the same `zeitop-run` wrapper,
+regardless of the game launcher. For a direct executable:
+
+    /absolute/path/to/zeitop/zeitop-run /path/to/game
+
+For a separate runner:
+
+    /absolute/path/to/zeitop/zeitop-run /path/to/runner /path/to/game
+
+For Steam launch options only:
+
+    '/absolute/path/to/zeitop/zeitop-run' %command%
 
 The Frame Generation button displays the unmodified official lsfg-vk black
 duck logo, sourced from https://lsfg-vk.dev/logo.svg (lsfg-vk project,
 PancakeTAS). The icon is not drawn or recolored by Zeitop, and its use does
 not imply endorsement. The original SVG has a transparent background.
-
-    '/absolute/path/to/zeitop/zeitop-run' %command%
 
 The limiter toggle updates runtime/limit.state and affects intercepted
 present calls in an already-running game.
@@ -62,12 +69,13 @@ session use atomic replacement and a shared lock.
 - The first-present helper has a bounded wait. An error or timeout
   releases the game's present with a warning instead of hanging it;
   frame generation may remain temporarily active in that failure path.
-  This failure mode remains a limitation; keep the GUI running during
-  Proton launches so IPC is available.
+  This failure mode remains a limitation; keep the GUI running when
+  launching games through read-only containers so IPC is available.
 
-### Proton / read-only game containers
+### Read-only game containers (including Proton)
 
-Steam Pressure Vessel may expose `runtime/` to the game as read-only.
+Containerized runners such as Steam Pressure Vessel may expose `runtime/`
+to the game as read-only.
 The first-present helper therefore sends `ZEITOP_FG_WARMUP1` over the
 existing `runtime/zeitop.sock` using an abstract reply address; it does
 not write project files from inside Proton. The GUI validates kernel Unix
@@ -78,9 +86,10 @@ only proceeds after that acknowledgement or its bounded failure path.
 No Steam, Proton or lsfg-vk files are patched, and the limiter is unchanged.
 
 Without a running GUI, direct native Linux launches use the original
-same-process warmup helper. Read-only Proton containers require the GUI
+same-process warmup helper. Read-only game containers require the GUI
 IPC endpoint; otherwise the timeout/failure warning above applies.
-The game must still be validated separately in the real Proton runtime.
+FG and limiter control were confirmed in a game under Proton after the IPC
+change; this does not establish universal per-title compatibility.
 
 The actual application-side layer order is:
 game -> Zeitop -> lsfg-vk -> driver. Explicit VK_INSTANCE_LAYERS
@@ -145,7 +154,7 @@ a game restart. Changing a profile's name/removing the one used at launch
 also requires restarting. Each launched game has a separate runtime TOML and saved startup profile
 identity. FG on/off in the GUI remains a global preference applied to all
 tracked sessions. The presenting process claims its session during the
-first-present handshake, which also handles Steam/Proton PID handoff.
+first-present handshake, including when a launcher hands off to a child process.
 Only downstream presentation tracing confirms generated output frames.
 
 Live FG operation still requires the external lsfg-vk Vulkan layer to have
@@ -203,16 +212,19 @@ bypassed, 2x output after enabling, then 1x output after disabling.
 The experimental stage2 backend is not FG-enabled. Disabling or
 missing the external FG layer falls back to the existing limiter.
 Known direct ELF32 launches also fall back to the limiter: the
-installed lsfg-vk x86 layer failed device enumeration in the tested
-environment. This cannot automatically detect the architecture of
-every descendant of a 64-bit Steam/Proton launcher, so 32-bit Proton
-titles require separate compatibility verification.
+external lsfg-vk x86 layer failed device enumeration in an earlier test,
+and FG has not been validated for that architecture. Native 32-bit Vulkan
+presentation and Zeitop GUI telemetry were subsequently verified with a
+matching 32-bit Vulkan GPU driver. The wrapper does not automatically
+identify the architecture of every child spawned by another runner,
+so mixed-architecture launch paths still need separate verification.
 
 For actual games, still verify:
 - The title uses the Vulkan path and the lsfg-vk profile matches.
 - Generated output frames are not re-limited by Zeitop.
-- VSync/FIFO, Proton/DXVK and third-party overlay behavior.
-- The installed 64-bit layer, accessible user-owned DLL and GPU compatibility.
+- VSync/FIFO, translation layers (including DXVK) and overlay behavior.
+- A compatible external layer for the renderer's architecture, an accessible
+  user-owned DLL and a compatible GPU/driver.
 
 The previous Vulkan Loader message about a missing vkGetInstanceProcAddr
 appeared with lsfg-vk's negotiation skipped when no usable profile was
@@ -227,8 +239,11 @@ No external layer binary, manifest, or system installation was modified.
 ## Testing
 
 Run the existing Python unittest suite and JavaScript syntax checks.
-Tests include isolated synthetic TOML fixtures and real vkcube +
-lsfg-vk integration tests with a temporary downstream probe. No user-owned
-config/DLL or system Vulkan manifest is modified. Cyberpunk/Proton remains
-a manual validation step; the helper's two-second failure cap and process
-handoff logic should be checked with that specific runner.
+Tests include isolated synthetic TOML fixtures, first-present IPC tests
+and real vkcube + lsfg-vk integration tests with a temporary downstream
+probe. Read-only filesystem and PID-namespace simulations validated the
+IPC handshake. Direct native 32-bit Vulkan presentation and GUI telemetry
+were also tested. No user-owned config/DLL or system Vulkan manifest was
+modified. Each additional game and runner still requires verification of
+the first-present timeout/failure path and process handoff. See
+[validation](VALIDATION.md) for summarized results.
