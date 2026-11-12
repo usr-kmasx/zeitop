@@ -31,31 +31,6 @@ Authoritative references:
 7. Select Save Changes; the selected ORIGINAL file is validated and written
    atomically. Reload rereads it and discards unsaved edits.
 
-### Select, save, or use a profile
-
-Selecting a profile in the left column does NOT activate it in a game
-and does NOT modify conf.toml. Save Changes is enabled only if its actual
-settings changed.
-
-There are two supported ways to use a saved profile:
-
-1. In the selected profile's Active In field, enter a game's executable
-   name (e.g. Game.exe), choose Save Changes, and restart the game.
-   The separately installed lsfg-vk layer then automatically matches it.
-2. To force a different saved profile without changing its Active In list,
-   select it and click Copy for Steam. Paste the resulting
-   LSFGVK_PROFILE=... %command% launch option into the appropriate game's
-   Steam Properties > Launch Options, and restart that game.
-
-The copied option explicitly selects the named profile for lsfg-vk alone.
-It does not include Zeitop's wrapper; combined frame generation and frame
-limiting remains unverified and is not enabled by this button. If the game's
-Steam Launch Options already contain other custom flags, preserve them
-manually rather than blindly replacing the entire command.
-
-A saved configuration or selected profile does not apply changes to a
-running game instantly. The game must start with the chosen profile.
-
 Path discovery considers LSFGVK_CONFIG, existing files under XDG_CONFIG_HOME,
 then the conventional ~/.config/lsfg-vk/conf.toml. Zeitop's WebKit private
 cache directory is not used to create a new lsfg-vk config.

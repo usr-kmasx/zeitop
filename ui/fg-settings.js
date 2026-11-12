@@ -20,17 +20,10 @@
     if (noticeTimer) clearTimeout(noticeTimer);
     noticeTimer = setTimeout(() => note.classList.remove('visible'), 4200);
   }
-  function updateActions() {
-    const hasProfile = !!current();
-    const validMultiplier = !hasProfile || $('custom-multiplier').checkValidity();
-    $('save').disabled = busy || !dirty || !configuration ||
-      configuration.profiles.length === 0 || !validMultiplier;
-    $('copy-profile').disabled = busy || dirty || !configuration?.exists ||
-      !hasProfile || current().source_index == null;
-  }
   function changed() {
     dirty = true;
-    updateActions();
+    $('save').disabled = busy || !configuration || configuration.profiles.length === 0 ||
+      !$('custom-multiplier').checkValidity();
     $('footer-status').textContent = 'Unsaved changes. Save to edit the original lsfg-vk conf.toml.';
   }
   const activeLabels = (value) => Array.isArray(value) ? value.join(', ') : (value || '');
@@ -48,12 +41,7 @@
       item.textContent = profile.name || 'Unnamed profile';
       item.addEventListener('click', () => {
         selected = index;
-        $('profile-command-panel').hidden = true;
         render();
-        if (!dirty) {
-          $('footer-status').textContent =
-            'Selected "' + profile.name + '" for editing. Copy for Steam to use it at the next game launch.';
-        }
       });
       list.appendChild(item);
     });
@@ -92,7 +80,7 @@
     $('log-file').value = configuration.global.log_file || '';
     renderProfiles();
     renderProfile();
-    updateActions();
+    $('save').disabled = !dirty || busy || !configuration.profiles.length;
   }
   function newName(base) {
     const names = new Set(configuration.profiles.map((p) => p.name));
@@ -204,18 +192,6 @@
   $('browse-config').addEventListener('click', () => post('fg_choose_config'));
   $('browse-dll').addEventListener('click', () => post('fg_choose_dll'));
   $('reload').addEventListener('click', () => post('fg_load'));
-  $('copy-profile').addEventListener('click', () => {
-    const profile = current();
-    if (!profile || dirty || busy || !configuration?.exists ||
-        profile.source_index == null) {
-      notify('Save your changes before using this profile.', true);
-      return;
-    }
-    post('fg_copy_profile', { name: profile.name, revision: configuration.revision });
-  });
-  $('dismiss-command').addEventListener('click', () => {
-    $('profile-command-panel').hidden = true;
-  });
   $('fg-close').addEventListener('click', () => post('fg_close'));
   $('save').addEventListener('click', () => {
     if (!configuration || busy || !configuration.profiles.length) return;
@@ -232,7 +208,6 @@
         selected = 0;
         busy = false;
         dirty = false;
-        $('profile-command-panel').hidden = true;
         render();
         const status = message.status;
         $('footer-status').textContent = status?.cli_available ?
@@ -250,13 +225,6 @@
           'No changes to save.';
         notify(message.changed ? 'LSFG-VK configuration validated and saved.' : 'Already up to date.');
         break;
-      case 'profile_copied':
-        $('profile-command-text').value = message.command || '';
-        $('profile-command-panel').hidden = false;
-        $('footer-status').textContent =
-          'Copied for "' + message.name + '". Paste in Steam Launch Options and restart the game (FG only).';
-        notify('Profile launch command copied. Paste it into Steam and restart the game.');
-        break;
       case 'picked_dll':
         if (!configuration) return;
         configuration.global.dll = message.path;
@@ -265,7 +233,7 @@
         break;
       case 'error':
         busy = false;
-        updateActions();
+        $('save').disabled = !dirty || !configuration || !configuration.profiles.length;
         $('footer-status').textContent = 'Error: ' + (message.message || 'Unknown error');
         notify(message.message || 'Configuration operation failed.', true);
         break;

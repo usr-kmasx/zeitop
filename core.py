@@ -48,19 +48,6 @@ def set_enabled(root: Path, enabled: bool) -> None:
 def launch_option(root: Path) -> str:
     return f"{shlex.quote(str(Path(root).resolve() / 'zeitop-run'))} %command%"
 
-def profile_launch_option(profile_name: str) -> str:
-    """Profile override for the separately installed lsfg-vk layer.
-
-    This intentionally does not include zeitop-run: combined layer ordering
-    has not been approved. Copy to Steam Launch Options for next game launch.
-    """
-    if not isinstance(profile_name, str) or not profile_name.strip():
-        raise ValueError("Select a saved lsfg-vk profile first.")
-    if len(profile_name) > 120 or "\n" in profile_name or "\r" in profile_name:
-        raise ValueError("Invalid profile name.")
-    return f"LSFGVK_PROFILE={shlex.quote(profile_name)} %command%"
-
-
 def parse_packet(packet: bytes):
     try:
         fields = packet.decode("ascii").split()

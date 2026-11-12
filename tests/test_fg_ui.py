@@ -38,18 +38,6 @@ class TestFrameGenerationWindow(unittest.TestCase):
             self.assertIn(token, js)
         self.assertNotIn("VK_INSTANCE_LAYERS", js)
 
-    def test_can_copy_selected_saved_profile_without_editing_it(self):
-        html = (ROOT / "ui/fg-settings.html").read_text()
-        js = (ROOT / "ui/fg-settings.js").read_text()
-        app = (ROOT / "app.py").read_text()
-        self.assertIn('id="copy-profile"', html)
-        self.assertIn("fg_copy_profile", js)
-        self.assertIn('elif action == "fg_copy_profile":', app)
-        self.assertIn("profile_launch_option(", app)
-        self.assertIn("LSFGVK_PROFILE", (ROOT / "core.py").read_text())
-        self.assertIn("Save Changes", html)
-        self.assertIn("Active In", html)
-
     def test_new_settings_text_is_english_only(self):
         for relative in ("ui/fg-settings.html", "ui/fg-settings.js"):
             content = (ROOT / relative).read_text(encoding="utf-8")
