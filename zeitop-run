@@ -1,0 +1,49 @@
+#!/bin/sh
+# Steam options: /absolute/path/zeitop-run %command%
+# Non-Steam: /absolute/path/zeitop-run /path/to/game [args...]
+set -eu
+ROOT=$(CDPATH= cd "$(dirname "$0")" && pwd)
+LAYER_DIR="$ROOT/runtime/vulkan"
+VULKAN_64="$LAYER_DIR/libzeitop-vulkan.so"
+VULKAN_32="$LAYER_DIR/libzeitop-vulkan32.so"
+GL_HOOK="$ROOT/runtime/libzeitop-gl.so"
+if [ "$#" -eq 0 ]; then
+  printf 'Usage: %s /path/to/game [arguments...]\nSteam: %s %%command%%\n' "$0" "$0" >&2
+  exit 2
+fi
+# Explicit opt-in for *experimental* stage 2; normal launches remain unchanged.
+if [ "${ZEITOP_VULKAN_STAGE2:-0}" = "1" ]; then
+  LAYER_DIR="$ROOT/runtime/stage2"
+  VULKAN_64="$LAYER_DIR/libzeitop-stage2.so"
+  VULKAN_32="$LAYER_DIR/libzeitop-stage2-32.so"
+fi
+if [ ! -f "$VULKAN_64" ] ||
+   [ ! -f "$VULKAN_32" ] ||
+   [ ! -f "$ROOT/runtime/libzeitop-gl32.so" ] ||
+   [ ! -f "$GL_HOOK" ]; then
+  printf '%s\n' "Zeitop: components missing. Run ./run.sh once to build them." >&2
+  exit 1
+fi
+# For directly launched ELF32 programs, preload the matching GL shim.
+# Steam/Proton child processes inherit the architecture-filtered Vulkan layers.
+TARGET=$1
+case "$TARGET" in
+  */*) ;;
+  *) TARGET=$(command -v "$TARGET" 2>/dev/null || printf "%s" "$TARGET") ;;
+esac
+if [ -f "$TARGET" ] && command -v file >/dev/null 2>&1 &&
+   file -Lb -- "$TARGET" | grep -q "ELF 32-bit"; then
+  GL_HOOK="$ROOT/runtime/libzeitop-gl32.so"
+fi
+export ZEITOP_HOME="$ROOT"
+if [ -n "${VK_LAYER_PATH:-}" ]; then
+  export VK_LAYER_PATH="$LAYER_DIR:$VK_LAYER_PATH"
+else
+  export VK_ADD_LAYER_PATH="$LAYER_DIR${VK_ADD_LAYER_PATH:+:$VK_ADD_LAYER_PATH}"
+fi
+case ":${VK_INSTANCE_LAYERS:-}:" in
+  *:VK_LAYER_ZEITOP_pacing:*) ;;
+  *) export VK_INSTANCE_LAYERS="VK_LAYER_ZEITOP_pacing${VK_INSTANCE_LAYERS:+:$VK_INSTANCE_LAYERS}" ;;
+esac
+export LD_PRELOAD="$GL_HOOK${LD_PRELOAD:+:$LD_PRELOAD}"
+exec "$@"

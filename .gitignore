@@ -1,0 +1,12 @@
+# Build products, local experimental data and runtime socket/state
+/runtime/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.o
+*.so
+*.so.*
+*.log
+# Editor/local scratch
+*.swp
+*.swo
