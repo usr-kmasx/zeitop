@@ -7,6 +7,7 @@ and lsfg-vk's own hot reload watches it. No lsfg-vk code is included.
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import sys
 import tempfile
@@ -80,15 +81,90 @@ def remember_config(root: Path, source: str | Path) -> None:
     _write_atomic(_runtime(root) / "fg.selected-config", (str(path) + "\n").encode())
 
 
-def render_effective(original: bytes, *, enabled: bool) -> bytes:
-    """Keep the original byte-for-byte ON; set all profile multipliers=1 OFF."""
+def selected_profile(root: Path, source: Path | None = None) -> str | None:
+    """Saved user choice, scoped to its canonical TOML, not the editor cursor."""
+    source = Path(source) if source is not None else source_config(root)
+    marker = _runtime(root) / "fg.selected-profile.json"
+    if not marker.is_file() or marker.is_symlink():
+        return None
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("config") != str(source):
+            return None
+        name = data.get("name")
+        if not isinstance(name, str) or not name:
+            return None
+        profiles = fg_config.load_config(source)["profiles"]
+        if sum(profile["name"] == name for profile in profiles) != 1:
+            return None
+        return name
+    except (ValueError, OSError, fg_config.ConfigError):
+        return None
+
+
+def remember_profile(root: Path, source: Path, name: str) -> None:
+    """Validate and persist the choice without editing lsfg-vk's TOML."""
+    source = Path(source)
+    if (not source.is_absolute() or not isinstance(name, str) or
+            not name.strip() or "\n" in name or "\r" in name):
+        raise LiveConfigError("Choose a valid named profile.")
+    profiles = fg_config.load_config(source)["profiles"]
+    if sum(p["name"] == name for p in profiles) != 1:
+        raise LiveConfigError("Select one uniquely named profile before saving.")
+    marker = _runtime(root) / "fg.selected-profile.json"
+    _write_atomic(marker, json.dumps(
+        {"config": str(source), "name": name},
+        ensure_ascii=False
+    ).encode("utf-8") + b"\n")
+
+
+def active_launch_profile(root: Path, source: Path) -> str | None:
+    """Profile identity loaded by the most recently started Zeitop game."""
+    marker = _runtime(root) / "fg.active-launch.json"
+    if not marker.is_file() or marker.is_symlink():
+        return None
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+        if data.get("config") != str(source):
+            return None
+        name = data.get("name")
+        return name if isinstance(name, str) and name else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _mark_launch(root: Path, source: Path, name: str | None) -> None:
+    """Keep the startup identity: changing LSFGVK_PROFILE live is unsupported."""
+    path = _runtime(root) / "fg.active-launch.json"
+    _write_atomic(path, json.dumps({
+        "config": str(source), "name": name
+    }, ensure_ascii=False).encode("utf-8") + b"\n")
+
+
+def render_effective(original: bytes, *, enabled: bool,
+                     current_profile: str | None = None,
+                     selected: str | None = None) -> bytes:
+    """Preserve canonical settings, overriding only hot-reloadable fields.
+
+    A running process retains the LSFGVK_PROFILE chosen at launch. When
+    the user saves a different selected profile, copy multiplier, flow_scale
+    and performance_mode from that selected profile onto the old startup
+    profile only in the runtime file. No structural fields are copied.
+    """
     if len(original) > fg_config.MAX_SIZE:
         raise LiveConfigError("The source configuration is too large.")
     doc = fg_config._parse(original)
     profiles = doc.get("profile", [])
     if not profiles:
         raise LiveConfigError("At least one lsfg-vk profile must exist.")
-    if enabled:
+    source_profile = None
+    target_profile = None
+    if current_profile and selected and current_profile != selected:
+        choices = [p for p in profiles if p.get("name") == selected]
+        active = [p for p in profiles if p.get("name") == current_profile]
+        if len(choices) == len(active) == 1:
+            source_profile, target_profile = choices[0], active[0]
+    if enabled and source_profile is None:
         return original
     try:
         source = original.decode("utf-8")
@@ -103,12 +179,23 @@ def render_effective(original: bytes, *, enabled: bool) -> bytes:
         if section == "[[profile]]":
             if index >= len(profiles):
                 raise LiveConfigError("Could not match lsfg-vk profile definitions.")
-            output.extend(fg_config._rewrite_table(
-                lines,
-                profiles[index],
-                {"multiplier": 1},
-                {"multiplier": 2},
-            ))
+            original_profile = profiles[index]
+            new_fields = {}
+            defaults = {}
+            if source_profile is not None and original_profile is target_profile:
+                for field, default in (
+                    ("multiplier", 2), ("flow_scale", 1.0),
+                    ("performance_mode", False)
+                ):
+                    new_fields[field] = source_profile.get(field, default)
+                    defaults[field] = default
+            if not enabled:
+                new_fields["multiplier"] = 1
+                defaults["multiplier"] = 2
+            output.extend(
+                fg_config._rewrite_table(lines, original_profile, new_fields, defaults)
+                if new_fields else lines
+            )
             index += 1
         elif section.startswith("[profile.") or section.startswith("[[profile."):
             raise LiveConfigError("Nested profile sections cannot be safely overridden.")
@@ -118,17 +205,28 @@ def render_effective(original: bytes, *, enabled: bool) -> bytes:
         raise LiveConfigError("Could not locate every lsfg-vk profile.")
     rendered = "".join(output).encode("utf-8")
     parsed = fg_config._parse(rendered)
-    if len(parsed.get("profile", [])) != len(profiles) or any(
-        p.get("multiplier", 2) != 1 for p in parsed["profile"]
-    ):
+    if len(parsed.get("profile", [])) != len(profiles):
+        raise LiveConfigError("Unexpected profile count in generated config.")
+    if not enabled and any(p.get("multiplier", 2) != 1 for p in parsed["profile"]):
         raise LiveConfigError("Failed to disable all multipliers in live config.")
+    if source_profile is not None and target_profile is not None:
+        target = parsed["profile"][profiles.index(target_profile)]
+        for key in ("flow_scale", "performance_mode"):
+            if target.get(key, fg_config.PROFILE_DEFAULTS[key]) != source_profile.get(
+                key, fg_config.PROFILE_DEFAULTS[key]
+            ):
+                raise LiveConfigError("Failed to hot-sync profile: " + key)
+        expected = source_profile.get("multiplier", 2) if enabled else 1
+        if target.get("multiplier", 2) != expected:
+            raise LiveConfigError("Failed to hot-sync profile: multiplier")
     return rendered
 
 
 def prepare_live(root: Path, *, enabled: bool | None = None,
                  source: Path | None = None, env=None,
                  validator: str | None = None,
-                 commit_state: bool = False) -> Path:
+                 commit_state: bool = False,
+                 mark_launch: bool = False) -> Path:
     """Safely regenerate the hot-reload file for currently running games.
 
     Call both at launch and whenever the GUI changes FG state or source
@@ -152,7 +250,15 @@ def prepare_live(root: Path, *, enabled: bool | None = None,
         content = fg_config._read_existing(config)
         if content is None:
             raise LiveConfigError("Source configuration disappeared.")
-        generated = render_effective(content, enabled=enabled)
+        selected = selected_profile(root, config)
+        environ = dict(os.environ if env is None else env)
+        inherited = environ.get("LSFGVK_PROFILE")
+        launch_name = inherited or selected
+        active_name = launch_name if mark_launch else active_launch_profile(root, config)
+        generated = render_effective(
+            content, enabled=enabled,
+            current_profile=active_name, selected=selected
+        )
         if validator:
             # The underlying parser is the same one validated for v2 and
             # the temporary candidate is checked with the installed CLI.
@@ -177,6 +283,9 @@ def prepare_live(root: Path, *, enabled: bool | None = None,
             if destination.is_file() and not destination.is_symlink() and destination.read_bytes() == generated:
                 if commit_state:
                     set_fg_enabled(root, enabled)
+                if mark_launch:
+                    _mark_launch(root, config, launch_name)
+                    return destination, launch_name
                 return destination
         except OSError:
             pass
@@ -185,6 +294,9 @@ def prepare_live(root: Path, *, enabled: bool | None = None,
         _write_atomic(destination, generated)
         if commit_state:
             set_fg_enabled(root, enabled)
+        if mark_launch:
+            _mark_launch(root, config, launch_name)
+            return destination, launch_name
         return destination
 
 
@@ -202,10 +314,17 @@ def switch_live(root: Path, enabled: bool) -> Path:
 
 
 def cli():
-    if len(sys.argv) != 3 or sys.argv[1] != "prepare":
-        raise SystemExit("Usage: fg_live.py prepare <zeitop-root>")
+    if len(sys.argv) != 3 or sys.argv[1] not in ("prepare", "launch"):
+        raise SystemExit("Usage: fg_live.py <prepare|launch> <zeitop-root>")
     try:
-        print(prepare_live(Path(sys.argv[2])))
+        if sys.argv[1] == "launch":
+            root = Path(sys.argv[2])
+            _, launch_name = prepare_live(root, mark_launch=True)
+            # Return the exact profile recorded while the launch lock was
+            # held. A concurrent Save cannot change this launch's identity.
+            print(launch_name or "")
+        else:
+            print(prepare_live(Path(sys.argv[2])))
     except (fg_config.ConfigError, OSError) as exc:
         print(f"Zeitop: cannot prepare lsfg-vk live config: {exc}", file=sys.stderr)
         return 1

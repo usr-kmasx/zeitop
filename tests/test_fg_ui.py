@@ -68,6 +68,17 @@ class TestFrameGenerationWindow(unittest.TestCase):
             self.assertFalse(re.search(r"[À-ÖØ-öø-ÿ]", content))
             self.assertNotRegex(content, r"Configurações|Copiar|Desativar|Fechar|Alvo")
 
+    def test_saved_profile_selection_is_restored_by_actual_browser_javascript(self):
+        import shutil
+        if not shutil.which("node"):
+            self.skipTest("node is unavailable")
+        run = subprocess.run(
+            ["node", str(ROOT / "tests/fg_selection_dom.js")],
+            cwd=ROOT, capture_output=True, text=True, timeout=10
+        )
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertIn("profile selection/save/reopen/reload", run.stdout)
+
     def test_settings_close_and_reopen_in_same_process(self):
         """Regression for settings not opening again until restarting Zeitop."""
         if not os.environ.get("WAYLAND_DISPLAY"):

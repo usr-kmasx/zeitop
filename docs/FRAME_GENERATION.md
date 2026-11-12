@@ -70,9 +70,11 @@ always includes Zeitop's hooks but they perform no pacing when the limiter
 flag is 0. This preserves the limiter's existing live-toggle behavior.
 The settings window does not contain a second FG enable button.
 
-The external lsfg-vk configuration still chooses the profile by active_in
-or an existing LSFGVK_PROFILE startup override. Enabling the layer does
-not select an arbitrary profile and does not bypass legal DLL ownership.
+The profile chosen and saved in Zeitop settings is passed to the game
+through LSFGVK_PROFILE at launch. An explicitly supplied LSFGVK_PROFILE
+from the game's own environment takes precedence over Zeitop's saved
+preference; without either, the external lsfg-vk uses active_in matching.
+This does not bypass legal DLL ownership.
 
 ## Using the editor
 
@@ -81,27 +83,41 @@ not select an arbitrary profile and does not bypass legal DLL ownership.
 3. Check the detected lsfg-vk conf.toml; use Browse if necessary.
 4. Select your own lsfg-vk.dll using Browse (or leave blank for auto-detection).
 5. Select, add, duplicate, or remove profiles in the left column.
+   Clicking a profile enables Save Changes even when fields are untouched.
 6. Edit profile properties on the right, and global settings below.
-7. Select Save Changes; the selected ORIGINAL file is validated and written
-   atomically. Reload rereads it and discards unsaved edits.
+7. Select Save Changes. Zeitop saves the preferred profile name privately
+   under runtime/, associated with the chosen source configuration.
+   Actual field changes, if any, are validated and atomically saved into
+   the original conf.toml with the existing private-backup behavior.
+8. Closing/reopening the editor restores the saved highlighted profile.
+   Reload discards unsaved field changes and an unsaved profile selection.
 
 ### Live updates versus profile selection
 
-The profile highlighted on the left is selected only for editing in Zeitop.
-It is not a command to switch the profile in a running game. lsfg-vk
-chooses the active profile through its game executable match (active_in)
-or an existing startup override (LSFGVK_PROFILE).
+Selecting a profile only edits the current UI state until Save Changes is
+clicked. Save stores the preference and the next game launched through
+zeitop-run uses LSFGVK_PROFILE with that selected name. This works even
+without an active_in match, provided the lsfg-vk layer and DLL are usable.
 
-The official lsfg-vk v2 documentation explicitly supports hot-reloading
-multiplier, flow_scale and performance_mode. When you edit these
-values in the profile the running game already uses, Save Changes
-writes them to conf.toml; lsfg-vk can then apply them without restarting
-the game. Selecting another profile in the editor does not itself change
-which profile is active in the running process.
+For a game already running with lsfg-vk loaded, its startup profile identity
+cannot be changed by updating the environment. Zeitop instead takes ONLY
+multiplier, flow_scale and performance_mode from the newly saved profile and
+copies these values onto the previously launched profile in the generated
+runtime conf.toml. The lsfg-vk v2 hot reload then applies these properties
+without restarting the game. Its active_in, pacing mode, swapchain
+quirks and other structural settings remain those of the startup profile.
+The user-owned canonical config is not edited by selection alone.
 
-Other configuration fields and switching the active profile may require
-restarting the game. Live FG operation still requires the external
-lsfg-vk Vulkan layer to have loaded successfully into the game.
+Changing other profile properties or the startup profile identity requires
+a game restart. Changing a profile's name/removing the one used at launch
+also requires restarting. This runtime overlay tracks the most recently
+started profile through Zeitop; multiple concurrently running games using
+different profiles are not independently managed by this single runtime
+configuration. Only the external lsfg-vk can determine successful frame
+generation and actual output FPS in an application.
+
+Live FG operation still requires the external lsfg-vk Vulkan layer to have
+loaded successfully into the game.
 
 Reference: https://lsfg-vk.dev/docs/configuration/configuration-options/
 

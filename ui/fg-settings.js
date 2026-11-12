@@ -4,6 +4,8 @@
   let configuration = null;
   let selected = 0;
   let dirty = false;
+  let savedProfile = null;
+  let selectionDirty = false;
   let busy = false;
   let noticeTimer = null;
 
@@ -20,11 +22,17 @@
     if (noticeTimer) clearTimeout(noticeTimer);
     noticeTimer = setTimeout(() => note.classList.remove('visible'), 4200);
   }
+  function canSave() {
+    return !!configuration && !!configuration.profiles.length && !busy &&
+      (dirty || selectionDirty) && $('custom-multiplier').checkValidity();
+  }
+  function updateSave() {
+    $('save').disabled = !canSave();
+    if (dirty || selectionDirty) $('footer-status').textContent = 'Unsaved changes';
+  }
   function changed() {
     dirty = true;
-    $('save').disabled = busy || !configuration || configuration.profiles.length === 0 ||
-      !$('custom-multiplier').checkValidity();
-    $('footer-status').textContent = 'Unsaved changes';
+    updateSave();
   }
   const activeLabels = (value) => Array.isArray(value) ? value.join(', ') : (value || '');
   const current = () => configuration?.profiles[selected] || null;
@@ -41,7 +49,9 @@
       item.textContent = profile.name || 'Unnamed profile';
       item.addEventListener('click', () => {
         selected = index;
+        selectionDirty = !!current() && current().name !== savedProfile;
         render();
+        updateSave();
       });
       list.appendChild(item);
     });
@@ -80,7 +90,7 @@
     $('log-file').value = configuration.global.log_file || '';
     renderProfiles();
     renderProfile();
-    $('save').disabled = !dirty || busy || !configuration.profiles.length;
+    updateSave();
   }
   function newName(base) {
     const names = new Set(configuration.profiles.map((p) => p.name));
@@ -198,16 +208,23 @@
     busy = true;
     $('save').disabled = true;
     $('footer-status').textContent = 'Saving...';
-    post('fg_save', { settings: configuration, revision: configuration.revision });
+    post('fg_save', {
+      settings: configuration,
+      revision: configuration.revision,
+      selected_profile: current()?.name || null,
+    });
   });
 
   window.zeitopFgResponse = (message) => {
     switch (message.type) {
       case 'state': {
         configuration = message.state;
-        selected = 0;
+        savedProfile = message.selectedProfile || null;
+        const previous = configuration.profiles.findIndex((p) => p.name === savedProfile);
+        selected = previous >= 0 ? previous : 0;
         busy = false;
         dirty = false;
+        selectionDirty = false;
         render();
         const status = message.status;
         $('footer-status').textContent = status?.cli_available ?
@@ -215,16 +232,22 @@
           'Ready';
         break;
       }
-      case 'saved':
+      case 'saved': {
+        const editingName = current()?.name || null;
         configuration = message.state;
+        savedProfile = message.selectedProfile || null;
+        const remembered = configuration.profiles.findIndex((p) => p.name === editingName);
+        if (remembered >= 0) selected = remembered;
         busy = false;
         dirty = false;
+        selectionDirty = !!current() && current().name !== savedProfile;
         render();
         $('footer-status').textContent = message.changed ?
           'Saved' :
           'No changes';
         notify(message.changed ? 'Saved' : 'No changes');
         break;
+      }
       case 'picked_dll':
         if (!configuration) return;
         configuration.global.dll = message.path;
@@ -233,7 +256,7 @@
         break;
       case 'error':
         busy = false;
-        $('save').disabled = !dirty || !configuration || !configuration.profiles.length;
+        updateSave();
         $('footer-status').textContent = 'Error: ' + (message.message || 'Unknown error');
         notify(message.message || 'Configuration operation failed.', true);
         break;

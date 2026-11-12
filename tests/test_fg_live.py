@@ -8,8 +8,9 @@ import unittest
 from pathlib import Path
 
 from core import create_layout, is_enabled, is_fg_enabled, set_enabled
-from fg_live import (LiveConfigError, prepare_live, remember_config,
-                     render_effective, source_config, switch_live)
+from fg_live import (LiveConfigError, active_launch_profile, prepare_live,
+                     remember_config, remember_profile, render_effective,
+                     selected_profile, source_config, switch_live)
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = '''# User's personal settings
@@ -104,6 +105,59 @@ class TestLiveFg(unittest.TestCase):
         with self.assertRaises(LiveConfigError):
             remember_config(self.root, live)
         self.assertEqual(self.config.read_text(), SAMPLE)
+
+    def test_selected_profile_persists_per_canonical_file(self):
+        original = self.config.read_bytes()
+        self.assertIsNone(selected_profile(self.root, self.config))
+        remember_profile(self.root, self.config, "Example Two")
+        self.assertEqual(selected_profile(self.root, self.config), "Example Two")
+        marker = self.root / "runtime/fg.selected-profile.json"
+        self.assertEqual(stat.S_IMODE(marker.stat().st_mode), 0o600)
+        self.assertEqual(self.config.read_bytes(), original)
+        other = self.root / "other.toml"
+        other.write_text(SAMPLE)
+        self.assertIsNone(selected_profile(self.root, other))
+        remember_profile(self.root, other, "Example One")
+        self.assertEqual(selected_profile(self.root, other), "Example One")
+        self.assertIsNone(selected_profile(self.root, self.config))
+        remember_profile(self.root, self.config, "Example Two")
+
+    def test_live_selection_updates_only_three_safe_fields_of_started_profile(self):
+        original = self.config.read_bytes()
+        remember_profile(self.root, self.config, "Example Two")
+        live, startup_name = prepare_live(
+            self.root, enabled=True, env=self.env, mark_launch=True
+        )
+        self.assertEqual(startup_name, "Example Two")
+        self.assertEqual(active_launch_profile(self.root, self.config), startup_name)
+        remember_profile(self.root, self.config, "Example One")
+        prepare_live(self.root, enabled=True, env=self.env)
+        profiles = tomllib.loads(live.read_text())["profile"]
+        active = profiles[1]
+        self.assertEqual(active["name"], "Example Two")
+        self.assertEqual(active["active_in"], "Game.exe")
+        self.assertEqual(active["multiplier"], 3)
+        self.assertAlmostEqual(active["flow_scale"], 0.85)
+        self.assertTrue(active["performance_mode"])
+        self.assertEqual(profiles[0]["multiplier"], 3)
+        self.assertNotIn("custom_field", active)
+        self.assertIn("custom_field", profiles[0])
+        self.assertEqual(original, self.config.read_bytes())
+        prepare_live(self.root, enabled=False, env=self.env)
+        off = tomllib.loads(live.read_text())["profile"]
+        self.assertEqual([x["multiplier"] for x in off], [1, 1])
+        self.assertAlmostEqual(off[1]["flow_scale"], 0.85)
+        prepare_live(self.root, enabled=True, env=self.env)
+        self.assertEqual(tomllib.loads(live.read_text())["profile"][1]["multiplier"], 3)
+
+    def test_ambiguous_profile_name_rejected_without_mutation(self):
+        source = self.config.read_bytes()
+        with self.assertRaises(LiveConfigError):
+            remember_profile(self.root, self.config, "Unknown")
+        self.config.write_text(SAMPLE.replace('name = "Example Two"', 'name = "Example One"'))
+        with self.assertRaises(LiveConfigError):
+            remember_profile(self.root, self.config, "Example One")
+        self.assertIsNone(selected_profile(self.root, self.config))
 
     def test_invalid_original_never_changes_state_or_source(self):
         remember_config(self.root, self.config)

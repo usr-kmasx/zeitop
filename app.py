@@ -377,6 +377,7 @@ def main():
             self.fg_revision = state["revision"]
             self._fg_send({
                 "type": "state", "state": state,
+                "selectedProfile": fg_live.selected_profile(ROOT, self.fg_config_path),
                 "status": fg_config.runtime_status(self.fg_config_path)
             })
             self.fg_ready_count += 1
@@ -437,6 +438,19 @@ def main():
                         raise fg_config.ConfigError("No configuration selected.")
                     if data.get("revision") != self.fg_revision:
                         raise fg_config.ConfigError("Configuration changed. Reload before saving.")
+                    selected_name = data.get("selected_profile")
+                    settings = data.get("settings")
+                    if not isinstance(settings, dict):
+                        raise fg_config.ConfigError("Invalid settings.")
+                    profiles = settings.get("profiles", [])
+                    if (not isinstance(selected_name, str) or
+                            not isinstance(profiles, list) or
+                            sum(isinstance(p, dict) and p.get("name") == selected_name
+                                for p in profiles) != 1):
+                        raise fg_config.ConfigError("Select one uniquely named profile.")
+                    previous_choice = fg_live.selected_profile(
+                        ROOT, self.fg_config_path
+                    )
                     current = fg_config.runtime_status(self.fg_config_path)
                     result = fg_config.save_config(
                         self.fg_config_path, data.get("settings"),
@@ -448,8 +462,13 @@ def main():
                     # the runtime view for games which already loaded lsfg-vk.
                     # A failed sync must not misrepresent the saved file.
                     sync_error = None
+                    stored_choice = previous_choice
                     try:
                         fg_live.remember_config(ROOT, self.fg_config_path)
+                        fg_live.remember_profile(
+                            ROOT, self.fg_config_path, selected_name
+                        )
+                        stored_choice = selected_name
                         fg_live.prepare_live(
                             ROOT, source=self.fg_config_path,
                             enabled=is_fg_enabled(ROOT)
@@ -458,7 +477,8 @@ def main():
                         sync_error = str(error)
                     self._fg_send({
                         "type": "saved", "state": result["state"],
-                        "changed": result["changed"]
+                        "selectedProfile": stored_choice,
+                        "changed": result["changed"] or stored_choice != previous_choice
                     })
                     if sync_error:
                         self._fg_send({"type": "error", "message":

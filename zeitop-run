@@ -41,9 +41,14 @@ fi
 # Never write the user's original conf.toml while switching the FG button.
 # Without a usable external configuration, fail safely to disabled FG and
 # preserve the Zeitop limiter for this game.
-if FG_LIVE_CONF=$(python3 -B "$ROOT/fg_live.py" prepare "$ROOT"); then
+if FG_PROFILE=$(python3 -B "$ROOT/fg_live.py" launch "$ROOT"); then
   unset DISABLE_LSFGVK
-  export LSFGVK_CONFIG="$FG_LIVE_CONF"
+  export LSFGVK_CONFIG="$ROOT/runtime/fg-live.conf.toml"
+  # The saved preference selects a profile at game startup. An explicit
+  # caller-supplied LSFGVK_PROFILE takes precedence.
+  if [ -z "${LSFGVK_PROFILE:-}" ] && [ -n "$FG_PROFILE" ]; then
+    export LSFGVK_PROFILE="$FG_PROFILE"
+  fi
 else
   export DISABLE_LSFGVK=1
   printf '%s\n' "Zeitop: lsfg-vk cannot be prepared; only the limiter will load." >&2

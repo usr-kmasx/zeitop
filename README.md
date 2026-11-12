@@ -47,6 +47,12 @@ game without restarting it: zeitop-run loads the user's installed lsfg-vk
 layer even with FG OFF (multiplier 1x bypass) and the button switches the
 generated runtime config between 1x and the user's configured multiplier.
 
+The selected profile is saved with Save Changes, persists when Settings
+reopens and is applied at game startup through LSFGVK_PROFILE. Selecting
+another profile while the game is open updates its multiplier, flow scale
+and performance mode in the generated live config; selecting it does not
+switch structural options until the game restarts.
+
 The original lsfg-vk conf.toml remains unchanged by the button, and the
 limiter's V12.11.26 pacing algorithm is unchanged. The game still needs
 to START through the launcher with a matching profile to initialize the
