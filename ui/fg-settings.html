@@ -35,7 +35,7 @@
         <button id="duplicate-profile" class="secondary-button" type="button">Duplicate</button>
         <button id="remove-profile" class="secondary-button danger" type="button">Remove</button>
       </div>
-      <p class="sidebar-help">Profiles are stored in the existing <code>conf.toml</code> and matched by the <b>Active In</b> field.</p>
+      <p class="sidebar-help">Selecting a profile only opens its settings. To use it in a game, set <b>Active In</b> and save, or click <b>Copy for Steam</b>. Restart the game to apply. The copied command uses FG only.</p>
     </aside>
     <section class="panel profile-panel" aria-label="Selected profile settings">
       <div class="panel-heading"><h2 id="editor-heading">PROFILE SETTINGS</h2><span class="pill">LSFG-VK 2</span></div>
@@ -70,9 +70,14 @@
       </div>
     </section>
   </div>
+  <section id="profile-command-panel" class="profile-command-panel" aria-label="Steam launch option" hidden>
+    <label for="profile-command-text">STEAM LAUNCH OPTIONS · FRAME GENERATION ONLY</label>
+    <div class="command-row"><input id="profile-command-text" type="text" spellcheck="false" readonly aria-label="Profile launch option"><button id="dismiss-command" type="button" aria-label="Hide command">Hide</button></div>
+    <small>Paste into Steam → Game Properties → Launch Options and restart the game. The combined Zeitop + FG order has not yet been validated.</small>
+  </section>
   <footer>
-    <div class="footer-description"><span class="info-dot" aria-hidden="true">i</span><span id="footer-status">Editing the external lsfg-vk config only. Frame Generation is not activated by this window.</span></div>
-    <div class="footer-actions"><button id="reload" class="secondary-button" type="button">Reload</button><button id="save" class="primary-button" type="button" disabled>Save Changes</button></div>
+    <div class="footer-description"><span class="info-dot" aria-hidden="true">i</span><span id="footer-status">Selecting a profile only edits it. Use Active In or copy its Steam command to apply at next game launch.</span></div>
+    <div class="footer-actions"><button id="reload" class="secondary-button" type="button">Reload</button><button id="copy-profile" class="secondary-button" type="button" disabled title="Copy the selected saved profile for Steam (FG only)">Copy for Steam</button><button id="save" class="primary-button" type="button" disabled>Save Changes</button></div>
   </footer>
   <div id="notification" class="notification" role="status" aria-live="polite"></div>
 </main>

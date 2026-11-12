@@ -10,7 +10,7 @@ from pathlib import Path
 
 import fg_config
 
-from core import TARGET_MS, AverageDisplayCadence, TelemetryTracker, brand_drag_hit, create_layout, decode_message, is_enabled, launch_option, parse_packet, set_enabled
+from core import TARGET_MS, AverageDisplayCadence, TelemetryTracker, brand_drag_hit, create_layout, decode_message, is_enabled, launch_option, profile_launch_option, parse_packet, set_enabled
 
 ROOT = Path(__file__).resolve().parent
 VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -36,6 +36,9 @@ def main():
             self.smoke = os.environ.get("ZEITOP_SMOKE_TEST") == "1"
             self.fg_smoke = os.environ.get("ZEITOP_FG_SMOKE_TEST") == "1"
             self.fg_reopen_smoke = os.environ.get("ZEITOP_FG_REOPEN_TEST") == "1"
+            self.fg_copy_smoke = os.environ.get("ZEITOP_FG_COPY_TEST") == "1"
+            self.fg_copy_count = 0
+            self.fg_copied_command = None
             self.fg_ready_count = 0
             self.fg_destroy_count = 0
             self.fg_window = None
@@ -120,6 +123,10 @@ def main():
                 GLib.timeout_add(1650, self._fg_reopen_close)
                 GLib.timeout_add(2550, self._fg_reopen_second)
                 GLib.timeout_add(4000, self._fg_reopen_finish)
+            if self.fg_copy_smoke:
+                GLib.timeout_add(450, self._fg_copy_smoke_open)
+                GLib.timeout_add(1400, self._fg_copy_smoke_use)
+                GLib.timeout_add(2900, self._fg_copy_smoke_finish)
 
         def smoke_check_drag_ready(self):
             surface = self.window.get_surface()
@@ -223,6 +230,31 @@ def main():
                     self.window.close()
             except (ValueError, TypeError, AttributeError) as err:
                 print(f"Zeitop bridge: {err}", file=sys.stderr)
+
+        def _fg_copy_smoke_open(self):
+            self.send_js("document.getElementById('settings').click()")
+            return False
+
+        def _fg_copy_smoke_use(self):
+            if self.fg_web:
+                self.fg_web.evaluate_javascript(
+                    "document.querySelectorAll('.profile-option')[1]?.click();"
+                    "document.getElementById('copy-profile').click();",
+                    -1, None, None, None, None, None
+                )
+            return False
+
+        def _fg_copy_smoke_finish(self):
+            expected = profile_launch_option("Test Profile With Spaces")
+            if self.fg_copy_count == 1 and self.fg_copied_command == expected:
+                print("ZEITOP_FG_COPY_PROFILE_OK", flush=True)
+            else:
+                print("ZEITOP_FG_COPY_PROFILE_FAIL", flush=True)
+            if self.fg_window:
+                self.fg_window.close()
+            if self.window:
+                self.window.close()
+            return False
 
         def _fg_reopen_first(self):
             self.send_js("document.getElementById('settings').click()")
@@ -415,6 +447,38 @@ def main():
                 elif action == "fg_close":
                     if self.fg_window:
                         self.fg_window.close()
+                elif action == "fg_copy_profile":
+                    if self.fg_config_path is None:
+                        raise fg_config.ConfigError("No configuration selected.")
+                    saved = fg_config.load_config(self.fg_config_path)
+                    if (not saved["exists"] or
+                            data.get("revision") != self.fg_revision or
+                            saved["revision"] != self.fg_revision):
+                        raise fg_config.ConfigError("Save changes or reload the config before copying.")
+                    name = data.get("name")
+                    if not isinstance(name, str) or not any(
+                            profile["name"] == name for profile in saved["profiles"]):
+                        raise fg_config.ConfigError("Profile is not saved in the selected config.")
+                    command = profile_launch_option(name)
+                    clipboard = Gdk.Display.get_default().get_clipboard()
+                    value = GObject.Value(GObject.TYPE_STRING)
+                    value.set_string(command)
+                    provider = Gdk.ContentProvider.new_union([
+                        Gdk.ContentProvider.new_for_value(value),
+                        Gdk.ContentProvider.new_for_bytes(
+                            "text/plain;charset=utf-8",
+                            GLib.Bytes.new(command.encode("utf-8"))
+                        ),
+                    ])
+                    if not clipboard.set_content(provider):
+                        raise fg_config.ConfigError("Could not copy the launch command.")
+                    self.fg_clipboard_provider = provider
+                    if self.fg_copy_smoke:
+                        self.fg_copy_count += 1
+                        self.fg_copied_command = command
+                    self._fg_send({
+                        "type": "profile_copied", "name": name, "command": command
+                    })
                 elif action == "fg_save":
                     if self.fg_config_path is None:
                         raise fg_config.ConfigError("No configuration selected.")

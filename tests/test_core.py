@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core import create_layout, set_enabled, is_enabled, launch_option, parse_packet, severity
+from core import create_layout, set_enabled, is_enabled, launch_option, profile_launch_option, parse_packet, severity
 
 
 class TestCore(unittest.TestCase):
@@ -19,6 +19,21 @@ class TestCore(unittest.TestCase):
     def test_launch_option_points_to_local_wrapper(self):
         root = Path("/home/a folder/zeitop")
         self.assertEqual(launch_option(root), "'/home/a folder/zeitop/zeitop-run' %command%")
+
+    def test_profile_launch_command_has_safe_shell_quoting_and_no_zeitop_layer(self):
+        self.assertEqual(
+            profile_launch_option("2X"),
+            "LSFGVK_PROFILE=2X %command%"
+        )
+        self.assertEqual(
+            profile_launch_option("4x FG / 85% [Performance]"),
+            "LSFGVK_PROFILE='4x FG / 85% [Performance]' %command%"
+        )
+        self.assertEqual(
+            profile_launch_option("Do not; execute $(cmd)"),
+            "LSFGVK_PROFILE='Do not; execute $(cmd)' %command%"
+        )
+        self.assertNotIn("zeitop-run", profile_launch_option("2X"))
 
     def test_parse_only_valid_telemetry(self):
         self.assertEqual(parse_packet(b"ZEITOP1 1202 33.371"), (1202, 33.371))
