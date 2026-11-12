@@ -24,7 +24,7 @@
     dirty = true;
     $('save').disabled = busy || !configuration || configuration.profiles.length === 0 ||
       !$('custom-multiplier').checkValidity();
-    $('footer-status').textContent = 'Unsaved changes. Save to edit the original lsfg-vk conf.toml.';
+    $('footer-status').textContent = 'Unsaved changes';
   }
   const activeLabels = (value) => Array.isArray(value) ? value.join(', ') : (value || '');
   const current = () => configuration?.profiles[selected] || null;
@@ -197,7 +197,7 @@
     if (!configuration || busy || !configuration.profiles.length) return;
     busy = true;
     $('save').disabled = true;
-    $('footer-status').textContent = 'Validating changes with lsfg-vk-cli...';
+    $('footer-status').textContent = 'Saving...';
     post('fg_save', { settings: configuration, revision: configuration.revision });
   });
 
@@ -211,8 +211,8 @@
         render();
         const status = message.status;
         $('footer-status').textContent = status?.cli_available ?
-          'lsfg-vk-cli detected. Edits are saved to the original config, not a Zeitop copy.' :
-          'lsfg-vk-cli was not found; local TOML validation is available.';
+          'Ready' :
+          'Ready';
         break;
       }
       case 'saved':
@@ -221,9 +221,9 @@
         dirty = false;
         render();
         $('footer-status').textContent = message.changed ?
-          'Saved. Multiplier, Flow Scale, and Performance Mode hot-reload for the active game profile.' :
-          'No changes to save.';
-        notify(message.changed ? 'LSFG-VK configuration validated and saved.' : 'Already up to date.');
+          'Saved' :
+          'No changes';
+        notify(message.changed ? 'Saved' : 'No changes');
         break;
       case 'picked_dll':
         if (!configuration) return;

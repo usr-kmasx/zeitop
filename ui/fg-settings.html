@@ -11,7 +11,7 @@
   <header class="topbar">
     <div class="heading">
       <span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>
-      <div><h1>FRAME GENERATION</h1><span class="subheading">LSFG-VK CONFIGURATION · EXTERNAL LAYER</span></div>
+      <div><h1>FRAME GENERATION</h1></div>
     </div>
     <button id="fg-close" class="icon-button close" type="button" aria-label="Close settings" title="Close settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -23,7 +23,7 @@
       <div class="path-field"><input id="config-path" type="text" placeholder="No configuration selected" readonly aria-label="Selected configuration path"><button id="browse-config" class="browse" type="button">Browse</button></div>
     </section>
     <section class="path-row" aria-label="Lossless Scaling DLL">
-      <div class="path-name"><span class="eyebrow">LOSSLESS SCALING DLL</span><span class="hint">User-owned file only</span></div>
+      <div class="path-name"><span class="eyebrow">LOSSLESS SCALING DLL</span></div>
       <div class="path-field"><input id="dll" type="text" spellcheck="false" placeholder="Select your lsfg-vk.dll (optional auto-detection)" aria-label="Lossless Scaling DLL path"><button id="browse-dll" class="browse" type="button">Browse</button></div>
     </section>
   </div>
@@ -35,7 +35,7 @@
         <button id="duplicate-profile" class="secondary-button" type="button">Duplicate</button>
         <button id="remove-profile" class="secondary-button danger" type="button">Remove</button>
       </div>
-      <p class="sidebar-help">Select a profile to <b>edit its settings</b>, not to switch the game&#39;s active profile. Games match a profile using <b>Active In</b>. Multiplier, Flow Scale, and Performance Mode hot-reload when saved for the active profile.</p>
+
     </aside>
     <section class="panel profile-panel" aria-label="Selected profile settings">
       <div class="panel-heading"><h2 id="editor-heading">PROFILE SETTINGS</h2><span class="pill">LSFG-VK 2</span></div>
@@ -44,10 +44,10 @@
         <div id="profile-fields">
           <div class="two-fields">
             <label class="field"><span>Profile Name</span><input id="profile-name" type="text" maxlength="120" placeholder="Profile name"></label>
-            <label class="field"><span>Pacing Mode</span><select id="pacing-mode"><option value="vsync">VSync (only supported mode)</option></select></label>
+            <label class="field"><span>Pacing Mode</span><select id="pacing-mode"><option value="vsync">VSync</option></select></label>
           </div>
-          <label class="field"><span>Active In <small>· executable names, comma separated</small></span><input id="active-in" type="text" placeholder="game.exe, another-game" spellcheck="false"></label>
-          <div class="row-label"><span>Multiplier</span><small>Generated output per real frame</small></div>
+          <label class="field"><span>Active In</span><input id="active-in" type="text" placeholder="game.exe, another-game" spellcheck="false"></label>
+          <div class="row-label"><span>Multiplier</span></div>
           <div class="multiplier" role="group" aria-label="Frame generation multiplier">
             <button type="button" data-multiplier="2" aria-pressed="true">2×</button>
             <button type="button" data-multiplier="3" aria-pressed="false">3×</button>
@@ -56,22 +56,22 @@
           <label class="custom-multiplier"><span>Custom Multiplier</span><input id="custom-multiplier" type="number" min="1" max="1024" step="1" value="2" inputmode="numeric"></label>
           <div class="scale-title"><label for="flow-scale">Flow Scale</label><output id="flow-value" for="flow-scale">1.00</output></div>
           <input id="flow-scale" type="range" min="0.25" max="1.00" step="0.01" value="1.00">
-          <p class="mini-note">Lower values reduce GPU load but may decrease motion detail.</p>
-          <div class="switch-row"><label for="performance-mode">Performance Mode <small>Lower processing cost</small></label><input id="performance-mode" type="checkbox"></div>
-          <div class="switch-row"><label for="override-present-mode">Override Present Mode <small>Force required FIFO/VSync presentation</small></label><input id="override-present-mode" type="checkbox" checked></div>
-          <div class="switch-row"><label for="preserve-image-count">Preserve Swapchain Image Count <small>Compatibility option</small></label><input id="preserve-image-count" type="checkbox"></div>
+
+          <div class="switch-row"><label for="performance-mode">Performance Mode</label><input id="performance-mode" type="checkbox"></div>
+          <div class="switch-row"><label for="override-present-mode">Override Present Mode</label><input id="override-present-mode" type="checkbox" checked></div>
+          <div class="switch-row"><label for="preserve-image-count">Preserve Swapchain Image Count</label><input id="preserve-image-count" type="checkbox"></div>
         </div>
         <div class="global-header"><h2>GLOBAL SETTINGS</h2><span class="eyebrow">ALL PROFILES</span></div>
-        <div class="switch-row global-switch"><label for="allow-fp16">Allow FP16 <small>Use hardware half-precision when supported</small></label><input id="allow-fp16" type="checkbox" checked></div>
+        <div class="switch-row global-switch"><label for="allow-fp16">Allow FP16</label><input id="allow-fp16" type="checkbox" checked></div>
         <div class="two-fields global-fields">
           <label class="field"><span>Log Level</span><select id="log-level"><option value="debug">Debug</option><option value="info">Info</option><option value="warning">Warning</option><option value="error">Error</option></select></label>
-          <label class="field"><span>Log File <small>· optional</small></span><input id="log-file" type="text" placeholder="/path/to/logfile" spellcheck="false"></label>
+          <label class="field"><span>Log File</span><input id="log-file" type="text" placeholder="/path/to/logfile" spellcheck="false"></label>
         </div>
       </div>
     </section>
   </div>
   <footer>
-    <div class="footer-description"><span class="info-dot" aria-hidden="true">i</span><span id="footer-status">Editing the external lsfg-vk config only. Frame Generation is not activated by this window.</span></div>
+    <span id="footer-status" class="footer-status" role="status" aria-live="polite">Ready</span>
     <div class="footer-actions"><button id="reload" class="secondary-button" type="button">Reload</button><button id="save" class="primary-button" type="button" disabled>Save Changes</button></div>
   </footer>
   <div id="notification" class="notification" role="status" aria-live="polite"></div>

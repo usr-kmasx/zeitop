@@ -46,9 +46,21 @@ class TestFrameGenerationWindow(unittest.TestCase):
             self.assertNotIn(text, html)
             self.assertNotIn(text, js)
         self.assertNotIn("fg_copy_profile", app)
-        self.assertIn("hot-reload", html)
-        self.assertIn("hot-reload", js)
         self.assertIn('id="save"', html)
+
+    def test_settings_window_has_no_explanatory_prose(self):
+        html = (ROOT / "ui/fg-settings.html").read_text(encoding="utf-8")
+        js = (ROOT / "ui/fg-settings.js").read_text(encoding="utf-8")
+        for content in (html, js):
+            for phrase in (
+                "hot-reload", "Multiplier, Flow Scale", "User-owned file only",
+                "Lower values reduce GPU load", "Editing the external lsfg-vk config",
+                "Save to edit the original", "Frames are generated",
+            ):
+                self.assertNotIn(phrase, content)
+        self.assertIn('id="save"', html)
+        self.assertIn('id="footer-status"', html)
+        self.assertIn('id="profile-list"', html)
 
     def test_new_settings_text_is_english_only(self):
         for relative in ("ui/fg-settings.html", "ui/fg-settings.js"):
