@@ -38,6 +38,18 @@ class TestFrameGenerationWindow(unittest.TestCase):
             self.assertIn(token, js)
         self.assertNotIn("VK_INSTANCE_LAYERS", js)
 
+    def test_no_unrequested_profile_copy_action_and_clear_live_update_text(self):
+        html = (ROOT / "ui/fg-settings.html").read_text()
+        js = (ROOT / "ui/fg-settings.js").read_text()
+        app = (ROOT / "app.py").read_text()
+        for text in ("copy-profile", "Copy for Steam", "profile-command-panel"):
+            self.assertNotIn(text, html)
+            self.assertNotIn(text, js)
+        self.assertNotIn("fg_copy_profile", app)
+        self.assertIn("hot-reload", html)
+        self.assertIn("hot-reload", js)
+        self.assertIn('id="save"', html)
+
     def test_new_settings_text_is_english_only(self):
         for relative in ("ui/fg-settings.html", "ui/fg-settings.js"):
             content = (ROOT / relative).read_text(encoding="utf-8")

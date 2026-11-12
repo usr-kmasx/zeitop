@@ -31,6 +31,26 @@ Authoritative references:
 7. Select Save Changes; the selected ORIGINAL file is validated and written
    atomically. Reload rereads it and discards unsaved edits.
 
+### Live updates versus profile selection
+
+The profile highlighted on the left is selected only for editing in Zeitop.
+It is not a command to switch the profile in a running game. lsfg-vk
+chooses the active profile through its game executable match (active_in)
+or an existing startup override (LSFGVK_PROFILE).
+
+The official lsfg-vk v2 documentation explicitly supports hot-reloading
+multiplier, flow_scale and performance_mode. When you edit these
+values in the profile the running game already uses, Save Changes
+writes them to conf.toml; lsfg-vk can then apply them without restarting
+the game. Selecting another profile in the editor does not itself change
+which profile is active in the running process.
+
+Other configuration fields and switching the active profile may require
+restarting the game. Live FG operation still requires the external
+lsfg-vk Vulkan layer to have loaded successfully into the game.
+
+Reference: https://lsfg-vk.dev/docs/configuration/configuration-options/
+
 Path discovery considers LSFGVK_CONFIG, existing files under XDG_CONFIG_HOME,
 then the conventional ~/.config/lsfg-vk/conf.toml. Zeitop's WebKit private
 cache directory is not used to create a new lsfg-vk config.

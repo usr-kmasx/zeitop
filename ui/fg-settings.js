@@ -221,7 +221,7 @@
         dirty = false;
         render();
         $('footer-status').textContent = message.changed ?
-          'Configuration saved. Some changes may require restarting the game.' :
+          'Saved. Multiplier, Flow Scale, and Performance Mode hot-reload for the active game profile.' :
           'No changes to save.';
         notify(message.changed ? 'LSFG-VK configuration validated and saved.' : 'Already up to date.');
         break;
