@@ -1,8 +1,9 @@
 # Frame Generation settings — external lsfg-vk 2.x
 
-Status: the external config editor is implemented on feature/lsfg-settings.
-The original V12.11.26 frame limiter and launcher remain unchanged.
-Combined Zeitop + lsfg-vk layer activation is not approved or guaranteed yet.
+Status: independent Frame Generation toggle and external settings editor
+are implemented on feature/lsfg-settings. The V12.11.26 production frame
+limiter algorithm and Vulkan/OpenGL hooks remain unchanged. The game launcher
+was updated to control the installed external lsfg-vk layer per process.
 
 ## License and ownership
 
@@ -19,6 +20,39 @@ Authoritative references:
 - https://lsfg-vk.dev/docs/configuration/configuration-options/
 - https://lsfg-vk.dev/docs/cli/
 - https://lsfg-vk.dev/docs/contributing/
+
+## Independent toggles in the main window
+
+The top bar has two separate icons: the original frame limiter and, directly
+to its right, lsfg-vk Frame Generation. Both work with the same existing
+Zeitop Steam command:
+
+    '/absolute/path/to/zeitop/zeitop-run' %command%
+
+The limiter toggle updates runtime/limit.state and affects intercepted
+present calls in an already-running game.
+
+The FG toggle updates runtime/fg.state, which defaults to OFF. This file
+is read by zeitop-run when starting a new game process:
+
+- OFF: sets DISABLE_LSFGVK=1 in that process, preventing the external
+  implicit layer from loading, regardless of the limiter's state.
+- ON: unsets DISABLE_LSFGVK so the user's existing implicit lsfg-vk
+  layer may load if a matching profile is configured.
+
+**FG toggling is for the next game launch, not a live layer attach/detach.**
+A game that was already running retains the Vulkan layers it initialized.
+The hot-reloadable values of the active profile are separate from enabling
+or disabling the layer itself.
+
+The FG icon remains available even when the limiter is off; the launcher
+always includes Zeitop's hooks but they perform no pacing when the limiter
+flag is 0. This preserves the limiter's existing live-toggle behavior.
+The settings window does not contain a second FG enable button.
+
+The external lsfg-vk configuration still chooses the profile by active_in
+or an existing LSFGVK_PROFILE startup override. Enabling the layer does
+not select an arbitrary profile and does not bypass legal DLL ownership.
 
 ## Using the editor
 
@@ -75,33 +109,45 @@ rejected rather than being guessed.
 The user's absolute config and DLL paths are runtime-only data and are
 NEVER hardcoded into project sources or published.
 
-## Combined layer ordering
+## Vulkan layer ordering and validation
 
-The settings window edits lsfg-vk only; it does NOT automatically activate
-Frame Generation or assert that it works after Zeitop's 30 FPS limiter.
-The lsfg-vk implicit layer is managed by the user's separate installation.
+The existing Vulkan loader chain was observed in four test combinations
+using a temporary Zeitop launcher, the user's installed lsfg-vk layer,
+an existing profile forced through LSFGVK_PROFILE for the diagnostic, and
+vulkaninfo --summary:
 
-Before enabling a combined FG mode we must verify, in a game:
-- The exact Vulkan layer and present call order;
-- Real frame pacing versus generated output cadence;
-- No re-limiting of interpolated frames;
-- Proton/DXVK, VSync/FIFO and MangoHud interactions;
-- Any required authorization for deeper integration.
+| Limiter state | FG state | Loader result |
+| --- | --- | --- |
+| OFF | OFF | lsfg-vk not loaded |
+| ON | OFF | lsfg-vk not loaded |
+| OFF | ON | Zeitop then lsfg-vk |
+| ON | ON | Zeitop then lsfg-vk |
 
-Without this evidence, the V12.11.26 limiter stays stable and independent.
+The Zeitop layer is still present but does not pace when its live flag is
+OFF. In the two ON cases, the loader logged the Zeitop layer before lsfg-vk.
+This establishes ordering for the tested loader environment, NOT proof that
+a game renders more frames or has correct output frametimes.
 
-### Current read-only Vulkan loader finding
+The wrapper intentionally refuses an explicit/forced lsfg-vk layer in
+VK_INSTANCE_LAYERS or VK_LOADER_LAYERS_ENABLE, because a forced layer can
+reverse the ordering or bypass the OFF flag. Leave lsfg-vk installed as
+the user's normal implicit layer and configure active_in in conf.toml.
 
-The installed lsfg-vk-cli and layer report version 2.0.0, and
-lsfg-vk-cli healthcheck and validate both pass. However, a read-only
-Zeitop + vulkaninfo test logged a Vulkan loader error indicating that
-the external lsfg-vk layer could not supply vkGetInstanceProcAddr.
-This was **not** a game test. The underlying cause and combined layer
-ordering therefore remain unverified. Zeitop neither modifies that
-external layer nor suppresses this error.
+For actual games, still verify:
+- The title uses the Vulkan path and the lsfg-vk profile matches.
+- Generated output frames are not re-limited by Zeitop.
+- VSync/FIFO, Proton/DXVK and third-party overlay behavior.
+- The installed 64-bit layer, accessible user-owned DLL and GPU compatibility.
 
-The unmodified loader logs are stored in local ignored runtime files,
-not in the Git repository.
+The previous Vulkan Loader message about a missing vkGetInstanceProcAddr
+appeared with lsfg-vk's negotiation skipped when no usable profile was
+selected; on a read-only test with LSFGVK_PROFILE explicitly selected,
+both layers loaded correctly. The Vulkan Loader has a known negotiation
+fallback which can produce a misleading diagnostic when a layer declines
+loading (Khronos issue #1904, fixed upstream in September 2026).
+
+No code from lsfg-vk, DLL, or private paths is stored in this repository.
+No external layer binary, manifest, or system installation was modified.
 
 ## Testing
 

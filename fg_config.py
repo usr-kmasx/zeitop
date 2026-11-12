@@ -390,6 +390,52 @@ def save_config(path: Path | str, values: dict, expected_revision: str,
             "state": load_config(path)}
 
 
+def external_fg_available(*, env=None) -> bool:
+    """Verify external layer and v2 configuration exist without modifying them.
+
+    The GUI toggle controls only future Zeitop launches. This check is not
+    proof that a particular game's profile matches or that generated frames
+    have been presented.
+    """
+    env = os.environ if env is None else env
+    try:
+        config = load_config(discover_config(env=env))
+        if not config["exists"] or not config["profiles"]:
+            return False
+        dll = config["global"].get("dll")
+        if dll and not Path(dll).is_file():
+            return False
+    except (OSError, ConfigError):
+        return False
+
+    home = Path(env.get("HOME") or str(Path.home()))
+    user_data = Path(env.get("XDG_DATA_HOME") or str(home / ".local/share"))
+    layer_dirs = (
+        user_data / "vulkan" / "implicit_layer.d",
+        home / ".local/share/vulkan/implicit_layer.d",
+        Path("/usr/local/share/vulkan/implicit_layer.d"),
+        Path("/usr/share/vulkan/implicit_layer.d"),
+    )
+    for folder in layer_dirs:
+        manifest = folder / "VkLayer_LSFGVK_frame_generation.json"
+        try:
+            if not manifest.is_file():
+                continue
+            info = json.loads(manifest.read_text(encoding="utf-8"))
+            layer = info.get("layer", {})
+            library = layer.get("library_path", "")
+            if layer.get("name") != "VK_LAYER_LSFGVK_frame_generation" or not library:
+                continue
+            libpath = Path(library)
+            if not libpath.is_absolute():
+                libpath = (manifest.parent / libpath).resolve()
+            if libpath.is_file():
+                return True
+        except (OSError, ValueError, TypeError):
+            continue
+    return False
+
+
 def runtime_status(config: Path | str) -> dict:
     """Only observes installed external tools and the selected config file."""
     config = Path(config)

@@ -35,6 +35,33 @@ if [ -f "$TARGET" ] && command -v file >/dev/null 2>&1 &&
    file -Lb -- "$TARGET" | grep -q "ELF 32-bit"; then
   GL_HOOK="$ROOT/runtime/libzeitop-gl32.so"
 fi
+# Frame generation uses the user's separately installed implicit lsfg-vk
+# layer. Its activation is per-process at Vulkan initialization time.
+# DISABLE_LSFGVK is a presence-based flag: even "=0" disables the layer.
+# When on, unset it; when off, explicitly set it so FG stays independent
+# of the limiter's live runtime/limit.state flag.
+FG_STATE="$ROOT/runtime/fg.state"
+if [ -r "$FG_STATE" ] && [ "$(cat "$FG_STATE")" = "1" ]; then
+  unset DISABLE_LSFGVK
+else
+  export DISABLE_LSFGVK=1
+fi
+# Forcing lsfg-vk through VK_INSTANCE_LAYERS changes implicit layer
+# precedence. It defeats an OFF state and can reverse the needed
+# Zeitop -> lsfg-vk order. Refuse this unsafe external combination;
+# rely on the installed implicit layer and the user's profile matching.
+inherited_layers=$(printenv VK_INSTANCE_LAYERS 2>/dev/null || true)
+case ":$inherited_layers:" in
+  *:VK_LAYER_LSFGVK_frame_generation*:*)
+    printf '%s\n' "Zeitop: remove explicit VK_LAYER_LSFGVK_frame_generation from VK_INSTANCE_LAYERS; lsfg-vk must be implicit to preserve ordering." >&2
+    exit 2 ;;
+esac
+forced_layers=$(printenv VK_LOADER_LAYERS_ENABLE 2>/dev/null || true)
+case "$forced_layers" in
+  *LSFGVK*|*lsfgvk*|*LSFG*|*lsfg*)
+    printf '%s\n' "Zeitop: remove forced lsfg-vk from VK_LOADER_LAYERS_ENABLE to preserve independent FG control and layer order." >&2
+    exit 2 ;;
+esac
 export ZEITOP_HOME="$ROOT"
 if [ -n "${VK_LAYER_PATH:-}" ]; then
   export VK_LAYER_PATH="$LAYER_DIR:$VK_LAYER_PATH"

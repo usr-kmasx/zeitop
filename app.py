@@ -10,7 +10,7 @@ from pathlib import Path
 
 import fg_config
 
-from core import TARGET_MS, AverageDisplayCadence, TelemetryTracker, brand_drag_hit, create_layout, decode_message, is_enabled, launch_option, parse_packet, set_enabled
+from core import TARGET_MS, AverageDisplayCadence, TelemetryTracker, brand_drag_hit, create_layout, decode_message, is_enabled, is_fg_enabled, launch_option, parse_packet, set_enabled, set_fg_enabled
 
 ROOT = Path(__file__).resolve().parent
 VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -197,6 +197,18 @@ def main():
                 if action == "toggle":
                     set_enabled(ROOT, not is_enabled(ROOT))
                     self.push_state()
+                elif action == "toggle_fg":
+                    requested = not is_fg_enabled(ROOT)
+                    if requested and not fg_config.external_fg_available():
+                        self.send_js("window.zeitopNotice('lsfg-vk unavailable')")
+                    else:
+                        set_fg_enabled(ROOT, requested)
+                        self.push_state()
+                        self.send_js(
+                            "window.zeitopNotice('FG " +
+                            ("enabled" if requested else "disabled") +
+                            " for next game launch')"
+                        )
                 elif action == "settings":
                     self.open_fg_settings()
                 elif action == "copy":
@@ -431,6 +443,7 @@ def main():
                         "type": "saved", "state": result["state"],
                         "changed": result["changed"]
                     })
+                    self.push_state()
             except (ValueError, TypeError, fg_config.ConfigError, OSError) as error:
                 self._fg_send({"type": "error", "message": str(error)})
 
@@ -443,6 +456,8 @@ def main():
             self.selected_pid = selected["pid"]
             payload = {
                 "enabled": is_enabled(ROOT),
+                "fgEnabled": is_fg_enabled(ROOT),
+                "fgAvailable": fg_config.external_fg_available(),
                 "connected": selected["pid"] is not None,
                 "real": selected["real"],
                 "average": self.average_display.display(selected["pid"], selected["average"]),

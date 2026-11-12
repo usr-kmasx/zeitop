@@ -2,6 +2,7 @@
   'use strict';
   const $ = (id) => document.getElementById(id);
   const power = $('toggle');
+  const fgPower = $('fg-toggle');
   const canvas = $('graph');
   const ctx = canvas.getContext('2d');
   const state = {enabled:false,connected:false,samples:[],real:null,average:null,target:33.333333};
@@ -12,6 +13,7 @@
     else zeitopNotice('Run Zeitop as a desktop app');
   }
   power.addEventListener('click', () => post('toggle'));
+  fgPower.addEventListener('click', () => post('toggle_fg'));
   $('copy').addEventListener('click', () => post('copy'));
   $('settings').addEventListener('click', () => post('settings'));
   $('close').addEventListener('click', () => post('close'));
@@ -72,6 +74,13 @@
     power.classList.toggle('active',!!state.enabled);
     power.setAttribute('aria-label',state.enabled?'Disable limiter':'Enable limiter');
     power.title=state.enabled?'Disable limiter':'Enable limiter';
+    fgPower.classList.toggle('active', !!state.fgEnabled);
+    fgPower.classList.toggle('unavailable', !state.fgAvailable);
+    fgPower.setAttribute('aria-pressed', String(!!state.fgEnabled));
+    fgPower.setAttribute('aria-label', state.fgEnabled?'Disable lsfg-vk':'Enable lsfg-vk');
+    fgPower.title = state.fgAvailable ?
+      (state.fgEnabled?'Disable FG (next game launch)':'Enable FG (next game launch)') :
+      'lsfg-vk unavailable';
     const real=$('real'), avg=$('average');
     real.textContent=metric(state.real);
     avg.textContent=metric(state.average);

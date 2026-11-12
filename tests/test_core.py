@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core import create_layout, set_enabled, is_enabled, launch_option, parse_packet, severity
+from core import create_layout, set_enabled, is_enabled, set_fg_enabled, is_fg_enabled, launch_option, parse_packet, severity
 
 
 class TestCore(unittest.TestCase):
@@ -15,6 +15,23 @@ class TestCore(unittest.TestCase):
             self.assertTrue(is_enabled(root))
             set_enabled(root, False)
             self.assertFalse(is_enabled(root))
+
+    def test_fg_and_limiter_have_independent_persisted_state(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / "runtime") as temp:
+            root = Path(temp)
+            create_layout(root)
+            self.assertFalse(is_fg_enabled(root))
+            self.assertFalse(is_enabled(root))
+            set_fg_enabled(root, True)
+            self.assertTrue(is_fg_enabled(root))
+            self.assertFalse(is_enabled(root))
+            set_enabled(root, True)
+            self.assertTrue(is_fg_enabled(root))
+            self.assertTrue(is_enabled(root))
+            set_fg_enabled(root, False)
+            self.assertFalse(is_fg_enabled(root))
+            self.assertTrue(is_enabled(root))
+            self.assertEqual((root / "runtime/fg.state").read_text(), "0\n")
 
     def test_launch_option_points_to_local_wrapper(self):
         root = Path("/home/a folder/zeitop")

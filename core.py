@@ -23,7 +23,7 @@ def decode_message(value):
     if not isinstance(data, dict):
         return None
     action = data.get("action")
-    return action if action in {"toggle", "copy", "close", "settings"} else None
+    return action if action in {"toggle", "toggle_fg", "copy", "close", "settings"} else None
 
 def create_layout(root: Path) -> None:
     folder = Path(root) / "runtime"
@@ -31,6 +31,10 @@ def create_layout(root: Path) -> None:
     state = folder / "limit.state"
     if not state.exists():
         state.write_text("0\n", encoding="ascii")
+    # External lsfg-vk is opt-in and independently controlled.
+    fg_state = folder / "fg.state"
+    if not fg_state.exists():
+        fg_state.write_text("0\n", encoding="ascii")
 
 def is_enabled(root: Path) -> bool:
     try:
@@ -44,6 +48,23 @@ def set_enabled(root: Path, enabled: bool) -> None:
     temp = state.with_suffix(".state.tmp")
     temp.write_text("1\n" if enabled else "0\n", encoding="ascii")
     temp.replace(state)
+
+def is_fg_enabled(root: Path) -> bool:
+    """Requested lsfg-vk state for the next Zeitop-launched game."""
+    try:
+        return (Path(root) / "runtime" / "fg.state").read_text(encoding="ascii").strip() == "1"
+    except OSError:
+        return False
+
+
+def set_fg_enabled(root: Path, enabled: bool) -> None:
+    """Atomic opt-in toggle; independent of the live frame limiter flag."""
+    create_layout(root)
+    state = Path(root) / "runtime" / "fg.state"
+    temp = state.with_suffix(".state.tmp")
+    temp.write_text("1\n" if enabled else "0\n", encoding="ascii")
+    temp.replace(state)
+
 
 def launch_option(root: Path) -> str:
     return f"{shlex.quote(str(Path(root).resolve() / 'zeitop-run'))} %command%"

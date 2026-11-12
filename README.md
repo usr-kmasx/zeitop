@@ -41,9 +41,15 @@ The Settings gear opens a separate window for editing an existing lsfg-vk
 version 2 configuration. It supports profiles, a user-owned DLL file picker,
 global settings, validation, private backups, and atomic saves.
 
-The editor does not bundle lsfg-vk or Lossless Scaling, enable their layer,
-or promise any combined frame-generation order with the limiter. The existing
-V12.11.26 limiter remains unchanged. See
+A separate Frame Generation icon sits immediately to the right of the
+limiter toggle. It independently enables or disables the user's installed
+lsfg-vk layer for games STARTED NEXT through zeitop-run. It does not attach
+a new layer to an already running game. The limiter remains live-switchable
+and its V12.11.26 pacing algorithm is unchanged.
+
+The editor does not bundle lsfg-vk or Lossless Scaling. Normal loader
+checks show Zeitop before lsfg-vk when both are enabled, but real-game
+frame-generation cadence remains to be measured. See
 [Frame Generation Settings](docs/FRAME_GENERATION.md) for details and limits.
 
 ## Operation
