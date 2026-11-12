@@ -1,6 +1,6 @@
 # Zeitop
 
-**Release:** V12.11.26 (November 12, 2026). See [release notes](docs/RELEASE_NOTES.md).
+**Release:** V12-1.11.26 (November 12, 2026). See [release notes](docs/RELEASE_NOTES.md).
 
 Zeitop is a compact desktop application (480 × 206 px) with a GTK4/WebKitGTK host and an HTML/CSS/JavaScript interface. Its presentation pacing target is **33.333333 ms** (approximately 30 FPS). No system-wide Vulkan layers, Steam files or game configuration files are modified by Zeitop.
 
