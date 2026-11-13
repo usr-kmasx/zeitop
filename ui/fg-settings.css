@@ -48,3 +48,7 @@ footer{display:flex;align-items:center;justify-content:space-between;gap:12px;ma
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#38444c;border-radius:6px}::-webkit-scrollbar-track{background:transparent}
 
 .custom-multiplier{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:7px;color:#94a4ad;font-size:10px}.custom-multiplier input{height:28px;width:75px;border:1px solid #343d46;border-radius:6px;background:#14191e;color:#65e0a1;padding:0 8px;text-align:center;font-variant-numeric:tabular-nums}.custom-multiplier input:invalid{border-color:#ad5e65}
+
+/* Zeitop-only launch setting; independent of lsfg-vk's VSync pacing field. */
+.presentation-control{margin:8px 1px 2px}
+.presentation-control small{line-height:1.35}

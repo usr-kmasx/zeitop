@@ -3,9 +3,13 @@ set -eu
 ROOT=$(CDPATH= cd "$(dirname "$0")" && pwd)
 if [ ! -f "$ROOT/runtime/vulkan/libzeitop-vulkan.so" ] ||
    [ ! -f "$ROOT/runtime/vulkan/libzeitop-vulkan32.so" ] ||
+   [ ! -f "$ROOT/runtime/vulkan/libzeitop-output.so" ] ||
+   [ ! -f "$ROOT/runtime/vulkan/libzeitop-output32.so" ] ||
    [ ! -f "$ROOT/runtime/libzeitop-gl.so" ] ||
    [ ! -f "$ROOT/runtime/libzeitop-gl32.so" ] ||
    [ "$ROOT/vulkan_layer.c" -nt "$ROOT/runtime/vulkan/libzeitop-vulkan.so" ] ||
+   [ "$ROOT/vulkan_layer.c" -nt "$ROOT/runtime/vulkan/libzeitop-output.so" ] ||
+   [ "$ROOT/limiter.c" -nt "$ROOT/runtime/vulkan/libzeitop-output.so" ] ||
    [ "$ROOT/limiter.c" -nt "$ROOT/runtime/libzeitop-gl.so" ]; then
     "$ROOT/build.sh"
 fi

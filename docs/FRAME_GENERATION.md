@@ -1,6 +1,6 @@
 # Frame Generation settings — external lsfg-vk 2.x
 
-Status: included in Zeitop V12-1.11.26 on the main branch. The original
+Status: included in Zeitop V13.11.26 on the main branch. The original
 V12.11.26 frame-limiter algorithm remains unchanged. The Vulkan hook adds a
 bounded first-present handshake, and each launch gets a private live TOML.
 
@@ -92,9 +92,11 @@ FG and limiter control were confirmed in a game under Proton after the IPC
 change; this does not establish universal per-title compatibility.
 
 The actual application-side layer order is:
-game -> Zeitop -> lsfg-vk -> driver. Explicit VK_INSTANCE_LAYERS
-places Zeitop before lsfg-vk; tracing verified the Zeitop hook receives
-one present per source frame, not all generated output frames.
+game -> Zeitop pacing -> lsfg-vk -> Zeitop output telemetry -> driver.
+The separate output observer sends nonblocking per-presentation timestamps
+over the existing local socket; it does not pace any downstream frames.
+The original hook still sees only source frames. When lsfg-vk is missing,
+the output observer is not injected, and the UI shows original FPS only.
 
 Only the original user-owned conf.toml is editable as the source of
 truth. The generated runtime copy is a temporary execution artifact,
@@ -176,6 +178,31 @@ preserve_swapchain_image_count.
 The editor follows the v2 sample's pacing_mode field, checked against
 lsfg-vk-cli. No unsupported pacing mode is offered.
 
+### Zeitop presentation mode (next-launch option)
+
+In Frame Generation Settings -> Global Settings, `Presentation Mode (Zeitop)`
+provides `Default` and `Immediate (Experimental)`. This is a Zeitop
+launch option, **not** an additional lsfg-vk `pacing_mode` value:
+lsfg-vk 2.x still uses `pacing_mode = "vsync"` internally.
+
+`Default` leaves the user's canonical lsfg-vk TOML and inherited Mesa
+presentation mode unchanged. `Immediate` writes
+`override_present_mode = false` only to each generated per-launch
+`runtime/fg-sessions/*.toml`, and the launcher exports
+`MESA_VK_WSI_PRESENT_MODE=immediate` only inside the game's environment.
+The selected option is saved under Zeitop's own ignored runtime directory.
+Each game snapshots the option at launch; changing it later does not alter
+an existing session or swapchain. Restart the game to switch modes.
+
+In a real Vulkan test using XCB/XWayland and the external lsfg-vk layer,
+Immediate allowed roughly 30 source -> 90 output FPS at 3x and
+30 source -> 120 output FPS at 4x; the corresponding synchronized modes
+stayed near 60 output FPS. These are presentation counts, not a guarantee
+of frames actually scanned out by the monitor. Native Wayland rejected
+`VK_PRESENT_MODE_IMMEDIATE_KHR` in the tested environment. Games or
+compositors may ignore or reject the override; tearing is possible.
+If the game fails or looks worse, select Default and relaunch it.
+
 For changes, Python's tomllib validates TOML and installed lsfg-vk-cli
 validates a temporary candidate. Comments and unknown fields in unchanged
 sections are retained. A private timestamped backup is saved beside the
@@ -195,19 +222,26 @@ app -> lsfg-vk -> Zeitop -> driver. Zeitop received BOTH the real and
 intermediate presents, reducing the FG 2x output from about 60 to 30 FPS
 when its 30 FPS limiter was enabled.
 
-The corrected explicit order is:
-app -> Zeitop -> lsfg-vk -> driver.
+The corrected production order is:
+app -> Zeitop pacing -> lsfg-vk -> Zeitop output telemetry -> driver.
 The wrapper builds the controlled prefix
-VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation, keeping other
-inherited explicit layers afterward without duplicates. With 120 vkcube
-source frames, Zeitop now receives 120 presents rather than 240.
+VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation:VK_LAYER_ZEITOP_output,
+keeping unrelated explicit layers afterward without duplicates.
+Only the upstream Zeitop layer runs the limiter and the source-frame timer.
+The downstream observer counts successfully forwarded output frames for
+the FPS indicator, without imposing waits. These counters are independent
+and are associated by process PID.
 
 A first-present gate is required because merely forcing this corrected
 order revealed a separate lsfg-vk hang when starting at bypass 1x and
 enabling 2x later. The gate primes 2x and atomically switches the
 private runtime TOML to bypass before the first app present continues.
-A test-only Vulkan probe downstream of lsfg-vk verifies 1x output while
-bypassed, 2x output after enabling, then 1x output after disabling.
+An independent test-only Vulkan probe verified 1x output while bypassed,
+2x output after enabling and 1x output after disabling. The production
+output observer was then separately tested against the same live transitions:
+the source remained near 30 FPS, while output changed from about 30 to 60
+presentations/s and back. The UI also shows `--` when output telemetry is
+missing instead of estimating generated FPS from the multiplier.
 
 The experimental stage2 backend is not FG-enabled. Disabling or
 missing the external FG layer falls back to the existing limiter.

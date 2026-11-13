@@ -82,6 +82,25 @@ def parse_packet(packet: bytes):
     except (UnicodeError, ValueError, OverflowError):
         return None
 
+def parse_output_packet(packet: bytes):
+    """Output-layer report: the process PID and successful present timestamp.
+
+    Output calls are observed *after* lsfg-vk. The original ZEITOP1
+    frame-time packet remains unchanged for existing clients.
+    """
+    try:
+        fields = packet.decode("ascii").split()
+        if len(fields) != 3 or fields[0] != "ZEITOP2":
+            return None
+        pid = int(fields[1])
+        timestamp_ns = int(fields[2])
+        if pid < 1 or timestamp_ns <= 0:
+            return None
+        return pid, timestamp_ns
+    except (UnicodeError, ValueError, OverflowError):
+        return None
+
+
 def severity(ms: float) -> str:
     return "good" if ms <= 34.5 else "warn" if ms <= 40.0 else "bad"
 
@@ -95,6 +114,7 @@ class TelemetryTracker:
 
     def __init__(self, max_samples=100, idle_seconds=2.5):
         self.sources = {}
+        self.output_events = {}
         self.max_samples = max_samples
         self.idle_seconds = idle_seconds
 
@@ -109,21 +129,77 @@ class TelemetryTracker:
                 "started": now,
                 "last": now,
                 "samples": deque(maxlen=self.max_samples),
+                # FPS is measured over roughly one second, independently of
+                # the last-100-frame graph (important above 100 FPS).
+                "fps_intervals": deque(maxlen=2048),
             }
             self.sources[pid] = source
         source["last"] = now
         source["samples"].append(frame_ms)
+        source["fps_intervals"].append(frame_ms)
+
+    def record_output(self, pid: int, timestamp_ns: int, now=None) -> None:
+        """One successful downstream Vulkan presentation; never a guess."""
+        now = time.monotonic() if now is None else now
+        if pid < 1 or timestamp_ns <= 0:
+            return
+        timestamp = timestamp_ns / 1_000_000_000
+        if abs(timestamp - now) > 5.0:
+            # A sandbox with a separate time namespace can still use
+            # receive-side timestamps; do not mistake them for display time.
+            timestamp = now
+        self._prune(now)
+        queue = self.output_events.setdefault(pid, deque(maxlen=2048))
+        queue.append(timestamp)
+
+    def reset_output(self) -> None:
+        """Discard pre-toggle 1x frames from the post-toggle FPS window."""
+        self.output_events.clear()
+
+    @staticmethod
+    def _source_fps(intervals, last, now):
+        if not intervals or now - last > 1.2:
+            return None
+        elapsed = 0.0
+        count = 0
+        for ms in reversed(intervals):
+            if count >= 3 and elapsed >= 1000.0:
+                break
+            elapsed += ms
+            count += 1
+        if count < 3 or elapsed < 500.0:
+            return None
+        return round(count * 1000.0 / elapsed, 1)
+
+    def _output_fps(self, pid, now):
+        samples = self.output_events.get(pid)
+        if not samples or now - samples[-1] > 1.2:
+            return None
+        # Count successful output presents in the last 1s window, using
+        # timestamps from the output hook, not a guessed FG multiplier.
+        recent = [t for t in samples if now - 1.0 <= t <= now + 0.1]
+        if len(recent) < 4:
+            return None
+        duration = recent[-1] - recent[0]
+        if duration < 0.45:
+            return None
+        return round((len(recent) - 1) / duration, 1)
 
     def _prune(self, now) -> None:
         for pid in list(self.sources):
             if now - self.sources[pid]["last"] > self.idle_seconds:
                 del self.sources[pid]
+                self.output_events.pop(pid, None)
+        for pid, events in list(self.output_events.items()):
+            if not events or now - events[-1] > self.idle_seconds:
+                del self.output_events[pid]
 
     def snapshot(self, now=None):
         now = time.monotonic() if now is None else now
         self._prune(now)
         if not self.sources:
-            return {"pid": None, "samples": [], "real": None, "average": None}
+            return {"pid": None, "samples": [], "real": None, "average": None,
+                    "source_fps": None, "output_fps": None}
         stable = [(pid, source) for pid, source in self.sources.items()
                   if len(source["samples"]) >= 4]
         candidates = stable or list(self.sources.items())
@@ -134,6 +210,8 @@ class TelemetryTracker:
             "samples": samples,
             "real": round(samples[-1], 2),
             "average": round(sum(samples) / len(samples), 2),
+            "source_fps": self._source_fps(selected["fps_intervals"], selected["last"], now),
+            "output_fps": self._output_fps(pid, now),
         }
 
 

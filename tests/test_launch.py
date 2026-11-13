@@ -25,6 +25,10 @@ class TestLaunch(unittest.TestCase):
         vals=json.loads(r.stdout.strip().splitlines()[-1])
         self.assertEqual(vals["ZEITOP_HOME"],str(ROOT))
         self.assertIn("VK_LAYER_ZEITOP_pacing", vals["VK_INSTANCE_LAYERS"])
+        if "VK_LAYER_LSFGVK_frame_generation" in vals["VK_INSTANCE_LAYERS"]:
+            self.assertIn("VK_LAYER_ZEITOP_output", vals["VK_INSTANCE_LAYERS"])
+        else:
+            self.assertNotIn("VK_LAYER_ZEITOP_output", vals["VK_INSTANCE_LAYERS"])
         self.assertIn("VK_LAYER_TEST_existing",vals["VK_INSTANCE_LAYERS"])
         self.assertIn(str(ROOT / "runtime" / "vulkan"),vals["VK_ADD_LAYER_PATH"])
         self.assertIn("/fake/existing/layers",vals["VK_ADD_LAYER_PATH"])

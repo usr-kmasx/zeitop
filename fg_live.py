@@ -77,6 +77,33 @@ def _write_atomic(path: Path, content: bytes) -> None:
         temp.unlink(missing_ok=True)
 
 
+PRESENTATION_MODES = ("default", "immediate")
+
+
+def presentation_mode(root: Path) -> str:
+    """Zeitop-only next-launch setting; missing or invalid data is safe."""
+    path = _runtime(root) / "fg.presentation-mode"
+    try:
+        if path.is_symlink():
+            return "default"
+        mode = path.read_text(encoding="ascii").strip()
+        return mode if mode in PRESENTATION_MODES else "default"
+    except (OSError, UnicodeError):
+        return "default"
+
+
+def remember_presentation_mode(root: Path, mode: str) -> None:
+    """Persist independently of the canonical lsfg-vk TOML."""
+    if mode not in PRESENTATION_MODES:
+        raise LiveConfigError("Unknown Zeitop presentation mode.")
+    path = _runtime(root) / "fg.presentation-mode"
+    if path.is_symlink():
+        raise LiveConfigError("Refusing symlinked presentation-mode setting.")
+    if presentation_mode(root) == mode and path.is_file():
+        return
+    _write_atomic(path, (mode + "\n").encode("ascii"))
+
+
 def remember_config(root: Path, source: str | Path) -> None:
     """Persist only the config path deliberately selected in the GUI."""
     path = Path(source).expanduser()
@@ -214,7 +241,8 @@ def _session_content(root: Path, entry: dict, enabled: bool) -> bytes:
     selected = selected_profile(root, canonical)
     return render_effective(
         content, enabled=enabled,
-        current_profile=entry.get("profile"), selected=selected
+        current_profile=entry.get("profile"), selected=selected,
+        presentation_mode=entry.get("presentation_mode", "default")
     )
 
 
@@ -275,14 +303,18 @@ def launch_session(root: Path, *, pid: int, env=None) -> tuple[Path, str | None,
         # present: the GUI could switch OFF between exec and Vulkan init.
         enabled = is_fg_enabled(root)
         pending = can_generate
+        mode = presentation_mode(root)
         entry = {
             "token": secrets.token_hex(12),
             "pid": pid, "start": start,
             "source": str(config), "profile": profile,
-            "pending": pending,
+            "presentation_mode": mode, "pending": pending,
         }
         live, meta = _session_paths(root, entry["token"])
-        _write_atomic(live, render_effective(source, enabled=enabled or pending))
+        _write_atomic(live, render_effective(
+            source, enabled=enabled or pending,
+            presentation_mode=mode
+        ))
         _write_atomic(meta, (json.dumps(entry) + "\n").encode("utf-8"))
         _mark_launch(root, config, profile)
     return live, profile, pending
@@ -321,7 +353,8 @@ def warmup_session(root: Path, token: str, *, pid: int | None = None) -> bool:
 
 def render_effective(original: bytes, *, enabled: bool,
                      current_profile: str | None = None,
-                     selected: str | None = None) -> bytes:
+                     selected: str | None = None,
+                     presentation_mode: str = "default") -> bytes:
     """Preserve canonical settings, overriding only hot-reloadable fields.
 
     A running process retains the LSFGVK_PROFILE chosen at launch. When
@@ -329,6 +362,8 @@ def render_effective(original: bytes, *, enabled: bool,
     and performance_mode from that selected profile onto the old startup
     profile only in the runtime file. No structural fields are copied.
     """
+    if presentation_mode not in PRESENTATION_MODES:
+        raise LiveConfigError("Unknown Zeitop presentation mode.")
     if len(original) > fg_config.MAX_SIZE:
         raise LiveConfigError("The source configuration is too large.")
     doc = fg_config._parse(original)
@@ -342,7 +377,7 @@ def render_effective(original: bytes, *, enabled: bool,
         active = [p for p in profiles if p.get("name") == current_profile]
         if len(choices) == len(active) == 1:
             source_profile, target_profile = choices[0], active[0]
-    if enabled and source_profile is None:
+    if enabled and source_profile is None and presentation_mode == "default":
         return original
     try:
         source = original.decode("utf-8")
@@ -370,6 +405,11 @@ def render_effective(original: bytes, *, enabled: bool,
             if not enabled:
                 new_fields["multiplier"] = 1
                 defaults["multiplier"] = 2
+            if presentation_mode == "immediate":
+                # Runtime copy only; never alter the user's source TOML.
+                # This does not change lsfg-vk's internal vsync pacing mode.
+                new_fields["override_present_mode"] = False
+                defaults["override_present_mode"] = True
             output.extend(
                 fg_config._rewrite_table(lines, original_profile, new_fields, defaults)
                 if new_fields else lines
@@ -387,6 +427,11 @@ def render_effective(original: bytes, *, enabled: bool,
         raise LiveConfigError("Unexpected profile count in generated config.")
     if not enabled and any(p.get("multiplier", 2) != 1 for p in parsed["profile"]):
         raise LiveConfigError("Failed to disable all multipliers in live config.")
+    if presentation_mode == "immediate" and any(
+        p.get("override_present_mode", True) is not False
+        for p in parsed["profile"]
+    ):
+        raise LiveConfigError("Failed to disable present-mode override.")
     if source_profile is not None and target_profile is not None:
         target = parsed["profile"][profiles.index(target_profile)]
         for key in ("flow_scale", "performance_mode"):
@@ -435,7 +480,8 @@ def prepare_live(root: Path, *, enabled: bool | None = None,
         active_name = launch_name if mark_launch else active_launch_profile(root, config)
         generated = render_effective(
             content, enabled=enabled,
-            current_profile=active_name, selected=selected
+            current_profile=active_name, selected=selected,
+            presentation_mode=presentation_mode(root)
         )
         if validator:
             # The underlying parser is the same one validated for v2 and
@@ -504,6 +550,10 @@ def cli():
             print(live)
             print(profile or "")
             print("1" if pending else "0")
+            # The session snapshots the option before its first present.
+            # Never re-read a concurrently modified global preference here.
+            entry = json.loads(live.with_suffix(".json").read_text(encoding="utf-8"))
+            print(entry["presentation_mode"])
         elif op == "warmup" and len(sys.argv) in (4, 5):
             from fg_ipc import request_warmup
             token = sys.argv[3]

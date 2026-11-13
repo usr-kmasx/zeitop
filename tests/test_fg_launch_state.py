@@ -18,12 +18,12 @@ import unittest
 from pathlib import Path
 
 from fg_config import discover_config, external_fg_available, load_config
-from fg_live import remember_config, remember_profile, switch_live
+from fg_live import remember_config, remember_profile, remember_presentation_mode, switch_live
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV_KEYS = ("DISABLE_LSFGVK", "VK_INSTANCE_LAYERS", "ZEITOP_HOME",
             "LD_PRELOAD", "LSFGVK_CONFIG", "LSFGVK_PROFILE",
-            "ZEITOP_FG_WARMUP_TOKEN")
+            "ZEITOP_FG_WARMUP_TOKEN", "MESA_VK_WSI_PRESENT_MODE")
 
 CONFIG = '''version = 2
 [global]
@@ -91,7 +91,7 @@ class TestIndependentFrameGenerationLaunch(unittest.TestCase):
                     self.assertEqual(env["ZEITOP_HOME"], str(self.root))
                     self.assertIsNone(env["DISABLE_LSFGVK"])
                     self.assertTrue(env["VK_INSTANCE_LAYERS"].startswith(
-                        "VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation"
+                        "VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation:VK_LAYER_ZEITOP_output"
                     ))
                     self.assertIn("libzeitop-gl.so", env["LD_PRELOAD"])
                     live = Path(env["LSFGVK_CONFIG"])
@@ -108,6 +108,45 @@ class TestIndependentFrameGenerationLaunch(unittest.TestCase):
                     self.assertEqual((self.root / "runtime/limit.state").read_text().strip(),
                                      "1" if limiter else "0")
                     self.assertEqual(self.config.read_bytes(), source)
+
+    def test_presentation_mode_is_exported_only_to_immediate_sessions(self):
+        original = self.config.read_bytes()
+        inherited = {"MESA_VK_WSI_PRESENT_MODE": "fifo"}
+        default = self.run_case(True, True, inherited=inherited)
+        self.assertEqual(default.returncode, 0, default.stderr)
+        env_default = json.loads(default.stdout.strip().splitlines()[-1])
+        self.assertEqual(env_default["MESA_VK_WSI_PRESENT_MODE"], "fifo")
+        default_live = Path(env_default["LSFGVK_CONFIG"])
+        self.assertTrue(default_live.is_file())
+        self.assertEqual(
+            tomllib.loads(default_live.read_text())["profile"][0].get("override_present_mode", True),
+            True,
+        )
+
+        remember_presentation_mode(self.root, "immediate")
+        immediate = self.run_case(True, True, inherited=inherited)
+        self.assertEqual(immediate.returncode, 0, immediate.stderr)
+        env_immediate = json.loads(immediate.stdout.strip().splitlines()[-1])
+        self.assertEqual(env_immediate["MESA_VK_WSI_PRESENT_MODE"], "immediate")
+        instant_live = Path(env_immediate["LSFGVK_CONFIG"])
+        profiles = tomllib.loads(instant_live.read_text())["profile"]
+        self.assertTrue(all(p["override_present_mode"] is False for p in profiles))
+        self.assertTrue(all(p["pacing_mode"] == "vsync" for p in profiles))
+        self.assertEqual(
+            json.loads(instant_live.with_suffix(".json").read_text())["presentation_mode"],
+            "immediate",
+        )
+
+        remember_presentation_mode(self.root, "default")
+        again = self.run_case(True, True, inherited=inherited)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        env_again = json.loads(again.stdout.strip().splitlines()[-1])
+        self.assertEqual(env_again["MESA_VK_WSI_PRESENT_MODE"], "fifo")
+        self.assertEqual(
+            json.loads(Path(env_again["LSFGVK_CONFIG"]).with_suffix(".json").read_text())
+            ["presentation_mode"], "default",
+        )
+        self.assertEqual(self.config.read_bytes(), original)
 
     def test_saved_selection_is_propagated_to_child_and_preserves_canonical(self):
         source = self.config.read_bytes()
@@ -165,7 +204,7 @@ class TestIndependentFrameGenerationLaunch(unittest.TestCase):
                 self.assertEqual(cp.returncode, 0, cp.stderr)
                 env = json.loads(cp.stdout.strip().splitlines()[-1])
                 self.assertEqual(env["VK_INSTANCE_LAYERS"],
-                    "VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation:VK_LAYER_MANGOHUD_overlay")
+                    "VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation:VK_LAYER_ZEITOP_output:VK_LAYER_MANGOHUD_overlay")
 
     def test_vk_loader_forced_enable_is_rejected(self):
         cp = self.run_case(True, False, inherited={"VK_LOADER_LAYERS_ENABLE": "*LSFGVK*"})
@@ -179,7 +218,7 @@ class TestIndependentFrameGenerationLaunch(unittest.TestCase):
         self.assertEqual(cp.returncode, 0, cp.stderr)
         env = json.loads(cp.stdout.strip().splitlines()[-1])
         self.assertEqual(env["VK_INSTANCE_LAYERS"],
-                         "VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation:VK_LAYER_TEST_other")
+                         "VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation:VK_LAYER_ZEITOP_output:VK_LAYER_TEST_other")
 
     def test_real_vkcube_profile_selected_without_active_in_match(self):
         """Saved next-launch profile must work without vkcube in Active In."""
@@ -336,6 +375,9 @@ class TestIndependentFrameGenerationLaunch(unittest.TestCase):
                 lsfg = "VK_LAYER_LSFGVK_frame_generation"
                 self.assertIn(zeitop, layers)
                 self.assertIn(lsfg, layers)
+                output = "VK_LAYER_ZEITOP_output"
+                self.assertIn(output, layers)
+                self.assertLess(layers.index(output), layers.index(lsfg))
                 # Vulkan Loader logs the insertion order from driver toward
                 # app; the application-first list in the environment is
                 # the opposite (verified using caller-address tracing).

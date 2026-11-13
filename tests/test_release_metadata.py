@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE = "V12-1.11.26"
+RELEASE = "V13.11.26"
 
 
 class TestReleaseMetadata(unittest.TestCase):

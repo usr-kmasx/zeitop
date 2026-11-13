@@ -20,6 +20,9 @@
 #include <unistd.h>
 
 extern void zeitop_before_present(void);
+#ifdef ZEITOP_OUTPUT_TELEMETRY
+extern void zeitop_output_present(void);
+#endif
 
 typedef struct InstanceRecord {
     void *key;
@@ -202,6 +205,7 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device,
     if (value.destroy) value.destroy(device, allocator);
 }
 
+#if !defined(ZEITOP_OUTPUT_TELEMETRY) && !defined(ZEITOP_PRESENT_PROBE)
 /* Per-process, one-shot prewarm: the app's FIRST present is held until
  * Zeitop changes its own private lsfg-vk TOML to bypass (if FG is OFF).
  * This is intentionally before calling the downstream lsfg-vk layer.
@@ -268,6 +272,8 @@ static void zeitop_fg_first_present_gate(void) {
     fprintf(stderr, "Zeitop FG: warmup timed out; releasing the present.\n");
 }
 
+#endif /* first-present gate belongs only to the pacing layer */
+
 #ifdef ZEITOP_PRESENT_PROBE
 /* Compiled only in test fixtures; never included in production builds.
  * Place downstream of lsfg-vk to count generated OUTPUT presentations. */
@@ -287,6 +293,13 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue, const VkPresentI
     if (!rec.present) return VK_ERROR_EXTENSION_NOT_PRESENT;
 #ifdef ZEITOP_PRESENT_PROBE
     zeitop_probe_output();
+#elif defined(ZEITOP_OUTPUT_TELEMETRY)
+    /* The last layer observes actual output after lsfg-vk, and must never
+     * pace it. Report only successful downstream presentation calls. */
+    VkResult result = rec.present(queue, info);
+    if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR)
+        zeitop_output_present();
+    return result;
 #else
     zeitop_fg_first_present_gate();
     zeitop_before_present();

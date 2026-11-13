@@ -30,6 +30,7 @@ class TestGuiSmoke(unittest.TestCase):
             self.fail(f"GUI smoke did not exit after the close click: {exc}")
         self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
         self.assertIn("ZEITOP_SMOKE_DRAG_READY", cp.stdout, cp.stdout + cp.stderr)
+        self.assertIn("ZEITOP_SMOKE_ICON_READY", cp.stdout, cp.stdout + cp.stderr)
         self.assertIn("ZEITOP_SMOKE_COPY_HANDLER_OK", cp.stdout, cp.stdout + cp.stderr)
         self.assertTrue(
             "ZEITOP_SMOKE_COPY_OK" in cp.stdout

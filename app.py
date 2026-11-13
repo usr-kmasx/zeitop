@@ -13,10 +13,13 @@ from pathlib import Path
 import fg_config
 import fg_live
 
-from core import TARGET_MS, AverageDisplayCadence, TelemetryTracker, brand_drag_hit, create_layout, decode_message, is_enabled, is_fg_enabled, launch_option, parse_packet, set_enabled, set_fg_enabled
+from core import TARGET_MS, AverageDisplayCadence, TelemetryTracker, brand_drag_hit, create_layout, decode_message, is_enabled, is_fg_enabled, launch_option, parse_packet, parse_output_packet, set_enabled, set_fg_enabled
 
 ROOT = Path(__file__).resolve().parent
 VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+# Must match the installed .desktop basename for GNOME/Wayland app grouping.
+APP_ID = "io.github.usr_kmasx.Zeitop"
+APP_ICON = "zeitop-icon"
 
 
 def main():
@@ -29,7 +32,12 @@ def main():
 
     class Zeitop(Gtk.Application):
         def __init__(self):
-            super().__init__(application_id=None)
+            # NON_UNIQUE preserves independent isolated/test launches; the
+            # actual application ID still identifies windows to GNOME.
+            super().__init__(
+                application_id=APP_ID,
+                flags=Gio.ApplicationFlags.NON_UNIQUE,
+            )
             self.tracker = TelemetryTracker()
             self.average_display = AverageDisplayCadence(interval_seconds=1.0)
             self.selected_pid = None
@@ -82,8 +90,15 @@ def main():
                 Gdk.Display.get_default(), provider,
                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
             )
+            # run.sh uses a private XDG_DATA_HOME for WebKit state, so
+            # the icon must be discoverable from the packaged PNG as well
+            # as from the installed desktop icon theme.
+            icons = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+            icons.add_search_path(str(ROOT / "ui" / "assets"))
+            Gtk.Window.set_default_icon_name(APP_ICON)
             self.css_provider = provider
             self.window = Gtk.ApplicationWindow(application=self)
+            self.window.set_icon_name(APP_ICON)
             self.window.add_css_class("zeitop-window")
             self.window.set_title(f"Zeitop {VERSION}")
             self.window.set_default_size(480, 206)
@@ -142,6 +157,13 @@ def main():
                 and self.drag_gesture.get_propagation_phase() == Gtk.PropagationPhase.CAPTURE
             )
             print("ZEITOP_SMOKE_DRAG_READY" if ready else "ZEITOP_SMOKE_DRAG_FAIL", flush=True)
+            icons = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+            icon_ready = (
+                self.get_application_id() == APP_ID
+                and self.window.get_icon_name() == APP_ICON
+                and icons.has_icon(APP_ICON)
+            )
+            print("ZEITOP_SMOKE_ICON_READY" if icon_ready else "ZEITOP_SMOKE_ICON_FAIL", flush=True)
             return False
 
         def on_drag_press(self, gesture, n_press, x, y):
@@ -222,6 +244,7 @@ def main():
                         print(f"Zeitop FG: {error}", file=sys.stderr)
                         self.send_js("window.zeitopNotice('FG update failed')")
                     else:
+                        self.tracker.reset_output()
                         self.push_state()
                         self.send_js(
                             "window.zeitopNotice('FG " +
@@ -307,6 +330,7 @@ def main():
                 self.fg_window.present()
                 return
             window = Gtk.Window()
+            window.set_icon_name(APP_ICON)
             window.set_title(f"Zeitop {VERSION} - Frame Generation Settings")
             window.set_transient_for(self.window)
             window.set_modal(False)
@@ -390,6 +414,8 @@ def main():
             if self.fg_config_path is None:
                 self.fg_config_path = fg_live.source_config(ROOT)
             state = fg_config.load_config(self.fg_config_path)
+            # Not a field of the user's canonical lsfg-vk configuration.
+            state["presentationMode"] = fg_live.presentation_mode(ROOT)
             self.fg_revision = state["revision"]
             self._fg_send({
                 "type": "state", "state": state,
@@ -458,12 +484,35 @@ def main():
                     settings = data.get("settings")
                     if not isinstance(settings, dict):
                         raise fg_config.ConfigError("Invalid settings.")
+                    requested_mode = settings.get("presentationMode", "default")
+                    if requested_mode not in fg_live.PRESENTATION_MODES:
+                        raise fg_config.ConfigError("Invalid Zeitop presentation mode.")
+                    previous_mode = fg_live.presentation_mode(ROOT)
                     profiles = settings.get("profiles", [])
                     if (not isinstance(selected_name, str) or
                             not isinstance(profiles, list) or
                             sum(isinstance(p, dict) and p.get("name") == selected_name
                                 for p in profiles) != 1):
                         raise fg_config.ConfigError("Select one uniquely named profile.")
+                    # Zeitop's display option has its own runtime file.
+                    # A mode-only save must not even rewrite/check the user's
+                    # canonical TOML via the profile editor or change a
+                    # previously selected profile.
+                    if data.get("presentation_only") is True:
+                        if requested_mode != previous_mode:
+                            fg_live.remember_presentation_mode(ROOT, requested_mode)
+                        state = fg_config.load_config(self.fg_config_path)
+                        state["presentationMode"] = fg_live.presentation_mode(ROOT)
+                        changed_mode = state["presentationMode"] != previous_mode
+                        self._fg_send({
+                            "type": "saved", "state": state,
+                            "selectedProfile": fg_live.selected_profile(
+                                ROOT, self.fg_config_path
+                            ),
+                            "changed": changed_mode,
+                            "restartRequired": changed_mode,
+                        })
+                        return
                     previous_choice = fg_live.selected_profile(
                         ROOT, self.fg_config_path
                     )
@@ -485,16 +534,22 @@ def main():
                             ROOT, self.fg_config_path, selected_name
                         )
                         stored_choice = selected_name
+                        if requested_mode != previous_mode:
+                            fg_live.remember_presentation_mode(ROOT, requested_mode)
                         fg_live.prepare_live(
                             ROOT, source=self.fg_config_path,
                             enabled=is_fg_enabled(ROOT)
                         )
                     except (fg_config.ConfigError, OSError) as error:
                         sync_error = str(error)
+                    current_mode = fg_live.presentation_mode(ROOT)
+                    result["state"]["presentationMode"] = current_mode
+                    restart_mode = current_mode != previous_mode
                     self._fg_send({
                         "type": "saved", "state": result["state"],
                         "selectedProfile": stored_choice,
-                        "changed": result["changed"] or stored_choice != previous_choice
+                        "changed": result["changed"] or stored_choice != previous_choice or restart_mode,
+                        "restartRequired": restart_mode
                     })
                     if sync_error:
                         self._fg_send({"type": "error", "message":
@@ -527,6 +582,8 @@ def main():
                 "real": selected["real"],
                 "average": self.average_display.display(selected["pid"], selected["average"]),
                 "samples": selected["samples"],
+                "sourceFps": selected["source_fps"],
+                "outputFps": selected["output_fps"],
                 "target": TARGET_MS,
             }
             self.send_js("window.zeitopUpdate(" + json.dumps(payload, allow_nan=False) + ")")
@@ -545,11 +602,16 @@ def main():
                 if fg_ipc.service_packet(self.sock, packet, address, ancdata, ROOT):
                     continue
                 sample = parse_packet(packet)
-                if not sample:
+                if sample:
+                    pid, elapsed = sample
+                    self.tracker.record(pid, elapsed)
+                    changed = True
                     continue
-                pid, elapsed = sample
-                self.tracker.record(pid, elapsed)
-                changed = True
+                output = parse_output_packet(packet)
+                if output:
+                    pid, timestamp_ns = output
+                    self.tracker.record_output(pid, timestamp_ns)
+                    changed = True
             if changed or self.tracker.snapshot()["pid"] != self.selected_pid:
                 self.push_state()
             return True

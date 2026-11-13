@@ -19,6 +19,7 @@ class TestFrameGenerationWindow(unittest.TestCase):
             'Performance Mode', 'Pacing Mode', 'Override Present Mode',
             'Preserve Swapchain Image Count', 'GLOBAL SETTINGS',
             'Allow FP16', 'Log Level', 'Log File', 'Save Changes',
+            'Presentation Mode (Zeitop)', 'Immediate (Experimental)', 'Default',
         ):
             self.assertIn(term, html)
 

@@ -1,13 +1,13 @@
 # Zeitop — frame pacing validation
 
 **Status:** The production limiter and independent lsfg-vk Frame Generation
-controls are released in V12-1.11.26. A separate frame-pacing controller
+controls are released in V13.11.26. A separate frame-pacing controller
 remains experimental and opt-in. The experiments below do not replace the
 production limiter or change system-wide graphics settings.
 
-## Verified production behavior (V12-1.11.26)
+## Verified production behavior (V13.11.26)
 
-The Vulkan call order is `application -> Zeitop -> lsfg-vk -> driver`.
+The Vulkan call order is `application -> Zeitop pacing -> lsfg-vk -> Zeitop output observer -> driver`.
 Zeitop limits source-frame presentations, not interpolated output frames.
 
 | Production test | Observation | Boundary |
@@ -18,15 +18,19 @@ Zeitop limits source-frame presentations, not interpolated output frames.
 | First-present IPC from read-only container | Acknowledged; pending state cleared; bypass applied | Local read-only and PID-namespace simulation |
 | Live FG and limiter through Proton | User-confirmed working after IPC fix | One game; no universal compatibility claim |
 | Native 32-bit Vulkan | Real presentations and GUI frame-time samples received | Requires an installed 32-bit Vulkan GPU driver |
+| Immediate (Experimental), selected at launch, 3× | Approximately 30 source FPS and 90 downstream output presentations/s | XCB/XWayland Vulkan test; not native Wayland |
+| Immediate (Experimental), selected at launch, 4× | Approximately 30 source FPS and 120 downstream output presentations/s | XCB/XWayland Vulkan test; not monitor scan-out |
+| Default mode on XCB at 3× | Approximately 20 source FPS and 60 downstream presentations/s | VSync-limited test, not necessarily all compositors |
+| Install → launch → reinstall → uninstall | Managed desktop entry/icon and 32/64-bit components verified | Isolated home; shared packages never removed in test |
 
 The 32-bit result validates the **limiter and telemetry**, not lsfg-vk
 Frame Generation. Directly detected ELF32 executables intentionally use
 the limiter-only fallback. Mixed-architecture runner processes need their
 own compatibility checks.
 
-The release test suite completed **108 tests with no failures and five
-environment-dependent skips**; JavaScript syntax and GUI behavior checks
-also passed. The project stores runtime measurements under ignored
+The previous V12-1.11.26 release completed 108 tests; the current
+V13.11.26 release ran 127 automated regression tests after the release
+metadata update (see release notes). The project stores runtime measurements under ignored
 `runtime/` and does not include device-specific logs or user configuration
 in the repository. These observations do not prove universal performance.
 
@@ -136,5 +140,5 @@ Do not replace the production limiter with the acquisition-time candidate
 until representative runner/game comparisons are completed, the unfavorable
 33 ms P99 is understood, and double waits, races and UI regressions have
 been ruled out. Keep the experimental opt-in and rollback mechanism. The
-released V12-1.11.26 production limiter and FG controls are not this
+released V13.11.26 production limiter and FG controls are not this
 experimental candidate.

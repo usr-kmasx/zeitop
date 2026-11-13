@@ -5,7 +5,7 @@
   const fgPower = $('fg-toggle');
   const canvas = $('graph');
   const ctx = canvas.getContext('2d');
-  const state = {enabled:false,connected:false,samples:[],real:null,average:null,target:33.333333};
+  const state = {enabled:false,connected:false,samples:[],real:null,average:null,sourceFps:null,outputFps:null,target:33.333333};
   let timeout = null;
   function post(action) {
     const handler = window.webkit?.messageHandlers?.zeitop;
@@ -84,6 +84,12 @@
     const real=$('real'), avg=$('average');
     real.textContent=metric(state.real);
     avg.textContent=metric(state.average);
+    const fps=(value)=>Number.isFinite(value)&&value>=0?String(Math.round(value)):'--';
+    $('source-fps').textContent=fps(state.sourceFps);
+    $('output-fps').textContent=fps(state.outputFps);
+    // Show the second value only when FG is requested. Unmeasured
+    // output remains '--', never source FPS multiplied by a factor.
+    $('fps-output').hidden=!state.fgEnabled;
     real.style.color=Number.isFinite(state.real)?(state.real<=34.5?'#55e7a5':state.real<=40?'#efc568':'#fa7980'):'#ecedef';
     $('connected').textContent=state.connected?'GAME CONNECTED':'WAITING FOR GAME';
     $('live-dot').classList.toggle('online',!!state.connected);

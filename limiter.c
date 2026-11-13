@@ -95,6 +95,32 @@ static void report_interval(uint64_t elapsed_ns) {
     (void)sendto(telemetry_socket, message, (size_t)n, MSG_DONTWAIT,
                  (struct sockaddr *)&address, sizeof address);
 }
+#ifdef ZEITOP_OUTPUT_TELEMETRY
+/* Downstream-only observer. Never calls the pacing controller or writes a
+ * file; this runs after lsfg-vk and reports successful output presentations.
+ * Timestamps are CLOCK_MONOTONIC (the same clock as the source limiter).
+ */
+void zeitop_output_present(void) {
+    const char *root = root_dir();
+    if (!root) return;
+    struct sockaddr_un address = {0};
+    address.sun_family = AF_UNIX;
+    int n = snprintf(address.sun_path, sizeof address.sun_path,
+                     "%s/runtime/zeitop.sock", root);
+    if (n < 0 || (size_t)n >= sizeof address.sun_path) return;
+    if (telemetry_socket < 0) {
+        telemetry_socket = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+        if (telemetry_socket < 0) return;
+    }
+    char packet[96];
+    n = snprintf(packet, sizeof packet, "ZEITOP2 %ld %llu",
+                 (long)getpid(), (unsigned long long)now_ns());
+    if (n <= 0 || (size_t)n >= sizeof packet) return;
+    (void)sendto(telemetry_socket, packet, (size_t)n, MSG_DONTWAIT,
+                 (struct sockaddr *)&address, sizeof address);
+}
+#endif
+
 void zeitop_before_present(void) {
     uint64_t current = now_ns();
     if (limiter_active() && previous_present_ns) {

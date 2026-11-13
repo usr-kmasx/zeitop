@@ -6,6 +6,8 @@
   let dirty = false;
   let savedProfile = null;
   let selectionDirty = false;
+  let savedPresentationMode = 'default';
+  let modeDirty = false;
   let busy = false;
   let noticeTimer = null;
 
@@ -24,11 +26,11 @@
   }
   function canSave() {
     return !!configuration && !!configuration.profiles.length && !busy &&
-      (dirty || selectionDirty) && $('custom-multiplier').checkValidity();
+      (dirty || selectionDirty || modeDirty) && $('custom-multiplier').checkValidity();
   }
   function updateSave() {
     $('save').disabled = !canSave();
-    if (dirty || selectionDirty) $('footer-status').textContent = 'Unsaved changes';
+    if (dirty || selectionDirty || modeDirty) $('footer-status').textContent = 'Unsaved changes';
   }
   function changed() {
     dirty = true;
@@ -88,6 +90,7 @@
     $('allow-fp16').checked = configuration.global.allow_fp16 !== false;
     $('log-level').value = configuration.global.log_level || 'info';
     $('log-file').value = configuration.global.log_file || '';
+    $('presentation-mode').value = configuration.presentationMode || 'default';
     renderProfiles();
     renderProfile();
     updateSave();
@@ -199,6 +202,12 @@
     configuration.global.log_file = $('log-file').value.trim();
     changed();
   });
+  $('presentation-mode').addEventListener('change', () => {
+    if (!configuration) return;
+    configuration.presentationMode = $('presentation-mode').value;
+    modeDirty = configuration.presentationMode !== savedPresentationMode;
+    updateSave();
+  });
   $('browse-config').addEventListener('click', () => post('fg_choose_config'));
   $('browse-dll').addEventListener('click', () => post('fg_choose_dll'));
   $('reload').addEventListener('click', () => post('fg_load'));
@@ -212,6 +221,9 @@
       settings: configuration,
       revision: configuration.revision,
       selected_profile: current()?.name || null,
+      // Avoid passing the user's TOML through the editor when only this
+      // separate Zeitop preference has changed.
+      presentation_only: modeDirty && !dirty && !selectionDirty,
     });
   });
 
@@ -220,6 +232,8 @@
       case 'state': {
         configuration = message.state;
         savedProfile = message.selectedProfile || null;
+        savedPresentationMode = configuration.presentationMode || 'default';
+        modeDirty = false;
         const previous = configuration.profiles.findIndex((p) => p.name === savedProfile);
         selected = previous >= 0 ? previous : 0;
         busy = false;
@@ -236,16 +250,19 @@
         const editingName = current()?.name || null;
         configuration = message.state;
         savedProfile = message.selectedProfile || null;
+        savedPresentationMode = configuration.presentationMode || 'default';
+        modeDirty = false;
         const remembered = configuration.profiles.findIndex((p) => p.name === editingName);
         if (remembered >= 0) selected = remembered;
         busy = false;
         dirty = false;
         selectionDirty = !!current() && current().name !== savedProfile;
         render();
-        $('footer-status').textContent = message.changed ?
-          'Saved' :
-          'No changes';
-        notify(message.changed ? 'Saved' : 'No changes');
+        const summary = message.restartRequired ?
+          'Saved - restart the game to change presentation mode' :
+          (message.changed ? 'Saved' : 'No changes');
+        $('footer-status').textContent = summary;
+        notify(summary);
         break;
       }
       case 'picked_dll':

@@ -66,6 +66,7 @@ assert.equal(messages.pop().action, 'fg_load');
 const state = {
   path: '/tmp/original/conf.toml', exists: true, revision: 'some-revision',
   global: {dll:'',allow_fp16:true,log_level:'info',log_file:''},
+  presentationMode: 'default',
   profiles: [
     {name:'4x Profile',source_index:0,multiplier:4,flow_scale:0.85,
       active_in:['vkcube'],performance_mode:true,pacing_mode:'vsync'},
@@ -102,6 +103,40 @@ get('reload').click();
 assert.equal(messages.at(-1).action,'fg_load');
 window.zeitopFgResponse({type:'state',state,selectedProfile:'4x Profile',status:{}});
 assert.equal(highlighted(),0,'reload must discard unsaved selection');
+
+// Zeitop-only presentation setting participates in Save, Reload and reopening.
+assert.equal(get('presentation-mode').value, 'default');
+get('presentation-mode').value = 'immediate';
+get('presentation-mode').handlers.change();
+assert.equal(get('save').disabled, false);
+get('save').click();
+assert.equal(messages.at(-1).action, 'fg_save');
+assert.equal(messages.at(-1).settings.presentationMode, 'immediate');
+assert.equal(messages.at(-1).presentation_only, true,
+  'editing only the Zeitop mode must not modify canonical lsfg-vk TOML');
+const savedImmediate = {
+  ...state, presentationMode: 'immediate',
+};
+window.zeitopFgResponse({
+  type: 'saved', state: savedImmediate, selectedProfile: '4x Profile',
+  changed: true, restartRequired: true,
+});
+assert.equal(get('presentation-mode').value, 'immediate');
+assert.match(get('footer-status').textContent, /restart the game/);
+assert.equal(get('save').disabled, true);
+get('presentation-mode').value = 'default';
+get('presentation-mode').handlers.change();
+assert.equal(get('save').disabled, false);
+get('reload').click();
+window.zeitopFgResponse({
+  type: 'state', state: {...savedImmediate, presentationMode: 'immediate'}, selectedProfile: '4x Profile',
+});
+assert.equal(get('presentation-mode').value, 'immediate');
+assert.equal(get('save').disabled, true);
+window.zeitopFgResponse({
+  type: 'state', state: {...state, presentationMode: 'default'}, selectedProfile: '4x Profile',
+});
+assert.equal(get('presentation-mode').value, 'default');
 
 // First-time users can save even the default first row.
 window.zeitopFgResponse({type:'state',state,selectedProfile:null,status:{}});

@@ -6,6 +6,8 @@ ROOT=$(CDPATH= cd "$(dirname "$0")" && pwd)
 LAYER_DIR="$ROOT/runtime/vulkan"
 VULKAN_64="$LAYER_DIR/libzeitop-vulkan.so"
 VULKAN_32="$LAYER_DIR/libzeitop-vulkan32.so"
+OUTPUT_64="$LAYER_DIR/libzeitop-output.so"
+OUTPUT_32="$LAYER_DIR/libzeitop-output32.so"
 GL_HOOK="$ROOT/runtime/libzeitop-gl.so"
 if [ "$#" -eq 0 ]; then
   printf 'Usage: %s /path/to/game [arguments...]\nSteam: %s %%command%%\n' "$0" "$0" >&2
@@ -20,7 +22,9 @@ fi
 if [ ! -f "$VULKAN_64" ] ||
    [ ! -f "$VULKAN_32" ] ||
    [ ! -f "$ROOT/runtime/libzeitop-gl32.so" ] ||
-   [ ! -f "$GL_HOOK" ]; then
+   [ ! -f "$GL_HOOK" ] ||
+   { [ "${ZEITOP_VULKAN_STAGE2:-0}" != "1" ] &&
+     { [ ! -f "$OUTPUT_64" ] || [ ! -f "$OUTPUT_32" ]; }; }; then
   printf '%s\n' "Zeitop: components missing. Run ./run.sh once to build them." >&2
   exit 1
 fi
@@ -52,7 +56,13 @@ if [ "${ZEITOP_VULKAN_STAGE2:-0}" != "1" ] && [ "$DIRECT_ELF32" != "1" ]; then
     FG_SESSION_CONFIG=$(printf '%s\n' "$FG_SESSION_OUTPUT" | sed -n '1p')
     FG_PROFILE=$(printf '%s\n' "$FG_SESSION_OUTPUT" | sed -n '2p')
     FG_PENDING=$(printf '%s\n' "$FG_SESSION_OUTPUT" | sed -n '3p')
+    FG_PRESENTATION_MODE=$(printf '%s\n' "$FG_SESSION_OUTPUT" | sed -n '4p')
     export LSFGVK_CONFIG="$FG_SESSION_CONFIG"
+    if [ "$FG_PRESENTATION_MODE" = "immediate" ]; then
+      # Applied only inside this launcher and its child game process.
+      # Native Wayland may reject IMMEDIATE; the user must opt in.
+      export MESA_VK_WSI_PRESENT_MODE=immediate
+    fi
     unset DISABLE_LSFGVK
     if [ -z "${LSFGVK_PROFILE:-}" ] && [ -n "$FG_PROFILE" ]; then
       export LSFGVK_PROFILE="$FG_PROFILE"
@@ -86,14 +96,19 @@ old_ifs=$IFS
 IFS=:
 for layer in $inherited_layers; do
   case "$layer" in
-    VK_LAYER_ZEITOP_pacing|VK_LAYER_LSFGVK_frame_generation|"") ;;
+    VK_LAYER_ZEITOP_pacing|VK_LAYER_LSFGVK_frame_generation|VK_LAYER_ZEITOP_output|"") ;;
     *) remaining_layers="${remaining_layers:+$remaining_layers:}$layer" ;;
   esac
 done
 IFS=$old_ifs
-if [ "$FG_READY" = "1" ]; then
-  export VK_INSTANCE_LAYERS="VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation${remaining_layers:+:$remaining_layers}"
+if [ "${ZEITOP_VULKAN_STAGE2:-0}" = "1" ]; then
+  # Opt-in experimental layer is intentionally unchanged and has no FG.
+  export VK_INSTANCE_LAYERS="VK_LAYER_ZEITOP_pacing${remaining_layers:+:$remaining_layers}"
+elif [ "$FG_READY" = "1" ]; then
+  # Calls run application -> pacing -> lsfg-vk -> output observer -> driver.
+  export VK_INSTANCE_LAYERS="VK_LAYER_ZEITOP_pacing:VK_LAYER_LSFGVK_frame_generation:VK_LAYER_ZEITOP_output${remaining_layers:+:$remaining_layers}"
 else
+  # No external FG layer was loaded; only source FPS is meaningful.
   export VK_INSTANCE_LAYERS="VK_LAYER_ZEITOP_pacing${remaining_layers:+:$remaining_layers}"
 fi
 export ZEITOP_HOME="$ROOT"

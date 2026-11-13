@@ -62,6 +62,14 @@
           <div class="switch-row"><label for="preserve-image-count">Preserve Swapchain Image Count</label><input id="preserve-image-count" type="checkbox"></div>
         </div>
         <div class="global-header"><h2>GLOBAL SETTINGS</h2><span class="eyebrow">ALL PROFILES</span></div>
+        <label class="field presentation-control">
+          <span>Presentation Mode (Zeitop)</span>
+          <select id="presentation-mode" aria-label="Zeitop presentation mode">
+            <option value="default">Default</option>
+            <option value="immediate">Immediate (Experimental)</option>
+          </select>
+          <small>Next game launch only. Immediate may fail on native Wayland; tested with XCB/XWayland.</small>
+        </label>
         <div class="switch-row global-switch"><label for="allow-fp16">Allow FP16</label><input id="allow-fp16" type="checkbox" checked></div>
         <div class="two-fields global-fields">
           <label class="field"><span>Log Level</span><select id="log-level"><option value="debug">Debug</option><option value="info">Info</option><option value="warning">Warning</option><option value="error">Error</option></select></label>
