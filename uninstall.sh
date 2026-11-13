@@ -4,11 +4,12 @@ set -euo pipefail
 if [[ ${1:-} == --help ]]; then
   cat <<'HELP'
 Usage: ./uninstall.sh [--remove-deps]
-Removes the managed Zeitop installation, GNOME entry, icon, both launchers,
+Removes the managed Zeitop installation, desktop entry, icon, both launchers,
 compiled libraries, caches, session files, and Zeitop-local preferences.
 Does not touch the Git source tree, Steam settings, or external lsfg-vk.
---remove-deps: additionally offer to remove ONLY pacman packages installed by
-Zeitop that are currently orphaned (requires sudo; not the default).
+--remove-deps: on Arch, also remove ONLY packages tracked as installed by
+Zeitop that are now pacman orphans. Other distros retain shared packages;
+automatic reverse dependency removal is not supported there.
 HELP
   exit 0
 fi
@@ -38,7 +39,10 @@ desktop_file="$desktop_dir/$app_id.desktop"
 icon_file="$icon_dir/$app_id.png"
 managed_token="ZEITOP_MANAGED_INSTALL_V1"
 launcher_token="ZEITOP_MANAGED_LAUNCHER_V1"
+source_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+source "$source_root/installer-deps.sh"
 deps=()
+deps_family=arch  # Historical installers (without a marker) were Arch-only.
 installed=0
 if [[ -L "$app_dir" ]]; then
   echo "Zeitop: refusing a symlinked application directory: $app_dir" >&2
@@ -51,6 +55,9 @@ if [[ -e "$app_dir" ]]; then
     exit 2
   fi
   installed=1
+  if [[ -f "$app_dir/.zeitop-dependency-manager" && ! -L "$app_dir/.zeitop-dependency-manager" ]]; then
+    deps_family=$(cat "$app_dir/.zeitop-dependency-manager")
+  fi
   if [[ -e "$app_dir/runtime/zeitop.lock" ]]; then
     if ! command -v flock >/dev/null 2>&1; then
       echo "Zeitop: missing flock; cannot safely check for a running instance." >&2
@@ -99,7 +106,11 @@ for folder in "$icon_dir" "$data_home/icons/hicolor/128x128" "$data_home/icons/h
 done
 
 if (( remove_deps && ${#deps[@]} )); then
-  if ! command -v pacman >/dev/null 2>&1; then
+  current_family=$(zeitop_detect_distro 2>/dev/null || true)
+  if [[ "$deps_family" != arch || "$current_family" != arch ]]; then
+    echo "Zeitop: shared system dependencies retained on this distribution."
+    echo "Zeitop: automatic orphan removal is supported only for Arch pacman."
+  elif ! command -v pacman >/dev/null 2>&1; then
     echo "Zeitop: pacman not found; shared dependencies retained."
   else
     mapfile -t orphans < <(pacman -Qdtq 2>/dev/null || true)
@@ -119,7 +130,10 @@ if (( remove_deps && ${#deps[@]} )); then
   fi
 elif (( ${#deps[@]} )); then
   echo "Zeitop: shared system packages were retained for other applications."
-  echo "  To remove packages installed solely for Zeitop, use --remove-deps"
-  echo "  during uninstall (the option checks pacman orphan status)."
+  if [[ "$deps_family" == arch ]]; then
+    echo "  On Arch, use --remove-deps during uninstall to check pacman orphan status."
+  else
+    echo "  On this distribution, dependency removal is intentionally manual."
+  fi
 fi
 echo "Zeitop: uninstall complete. Other apps and external lsfg-vk were left untouched."

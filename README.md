@@ -13,48 +13,72 @@ Run:
 
 The first run compiles 32-bit and 64-bit libraries into the source checkout's local `runtime/` directory. This direct-run option does not install system packages. To install the app and a desktop shortcut, use `./install.sh` below. Keep the GUI open for telemetry and live FG control.
 
-## Install and uninstall (Arch Linux)
+## Install and uninstall (supported Linux distributions)
 
-Run `./install.sh` once from the source checkout. On Arch Linux, it installs missing
-Arch dependencies via `sudo pacman` (Python + PyGObject, GTK4, WebKitGTK 6,
-GCC/multilib, Vulkan loaders and `file`), builds the 64-bit and 32-bit
-libraries and installs the app locally under
-`$XDG_DATA_HOME/zeitop` (or `~/.local/share/zeitop` when unset). It also creates
-`~/.local/bin/zeitop`, `~/.local/bin/zeitop-run`, an XDG-compliant desktop launcher
-and the same Zeitop logo used in the application header. The desktop
-entry's ID matches the GTK/Wayland application ID, so compatible desktops can associate
-the correct icon with the application window. The desktop file refers directly
-to the packaged PNG, so icon-theme caches are not required. Run `zeitop` or open it from the application menu. The
-app's Copy button will supply the **installed** Steam launch option.
-On first install the script copies only durable Zeitop preferences (selected
-FG profile/config, presentation mode and power toggle states) from the
-checkout; upgrades retain them from the prior installed copy. Runtime sockets,
-logs and active game sessions are never migrated.
+From the source checkout run `./install.sh`. The script identifies the
+distribution from `/etc/os-release`, installs **missing** dependencies using
+its native package manager, builds both the 64-bit and 32-bit Vulkan/GL
+libraries, and installs the application per-user. These package-manager paths
+are implemented:
+
+| Distribution family | Manager | Package preparation |
+|---|---|---|
+| Arch Linux and Arch-based systems | `pacman` | Multilib packages must be available |
+| Debian 13 / Ubuntu 24.04+ and compatible derivatives | `apt-get` | `i386` multiarch must already be enabled |
+| Fedora and compatible derivatives | `dnf` | 32-bit `i686` packages must be available |
+| openSUSE | `zypper` | 32-bit packages must be available in enabled repos |
+
+On Debian/Ubuntu, if the script reports that `i386` multiarch is disabled,
+the administrator must explicitly enable it before retrying:
+
+```sh
+sudo dpkg --add-architecture i386
+sudo apt-get update
+./install.sh
+```
+
+The installer **never** enables an architecture, changes distro repositories,
+replaces graphics drivers, edits Steam/Proton, or installs system-wide Vulkan
+layers. A matching 32-bit and 64-bit Vulkan GPU driver (ICD) is required
+separately. WebKitGTK 6.0, PyGObject and the 32-bit build toolchain must be
+available through the distribution's configured repositories. Package names
+and availability can differ on derivatives. Only the Arch installation has
+been tested with the host package manager; the other manager paths have
+isolated simulated-package-manager integration tests, **not** real-system
+validation.
+
+The app is installed under `$XDG_DATA_HOME/zeitop` (or
+`~/.local/share/zeitop` when unset), with `~/.local/bin/zeitop`,
+`~/.local/bin/zeitop-run`, an XDG desktop entry and the existing logo.
+The GTK/Wayland application ID matches the entry, whose absolute PNG path
+works without a theme cache. The Copy button supplies the installed Steam
+launch option. On first install, only durable preferences (FG profile/config,
+presentation mode and toggle states) are migrated from the checkout;
+upgrades keep those from the installed copy. Runtime sockets, logs, compiled
+binaries and active game sessions are never migrated.
 
 ```sh
 ./install.sh
-# later, from the checkout OR the installed app directory:
+# later, from the checkout or the installed app directory:
 ./uninstall.sh
 ```
 
-Uninstall removes the entire managed installed app directory (including
-private runtime configs, cache, logs, Vulkan/GL binaries), both user
-launchers, desktop entry and icon. It **does not** remove your Git
-checkout, external lsfg-vk installation/DLL, Steam library or Steam
-launch options. Stop the app and games first. Shared Arch packages are
-left installed by default; run `./uninstall.sh --remove-deps` *instead*
-to also offer safe removal of **only** packages installed by Zeitop
-which are currently pacman orphans. Previously installed packages and
-packages required by other software are never removed. The option must
-be used before the application's dependency manifest is deleted.
+Uninstall removes the managed application, private runtime files, launchers,
+desktop entry and icon. It does **not** remove the source checkout, Steam
+settings, external lsfg-vk or the proprietary Lossless Scaling DLL. It also
+does **not** remove shared distribution packages by default.
 
-`./install.sh --skip-deps` is intended for sandbox tests with
-dependencies already available; normal use should omit it. A GPU-specific
-Vulkan ICD must be available separately (for AMD GPUs, usually
-`vulkan-radeon` and `lib32-vulkan-radeon`); the installer supplies
-the generic loaders but does not replace GPU drivers. External lsfg-vk 2.x
-and legally owned Lossless Scaling remain optional external components
-and are not downloaded or modified by these scripts.
+On **Arch only**, `./uninstall.sh --remove-deps` additionally removes
+packages tracked as newly installed for Zeitop **only if they are currently
+pacman orphans**. On Debian, Fedora and openSUSE the same option deliberately
+retains all packages; administrators can review/remove them manually. Stop
+the application and any games launched with Zeitop before uninstalling.
+
+`./install.sh --skip-deps` avoids all package-manager operations for
+isolated tests or installations where prerequisites are already available.
+The 32-bit and 64-bit builds and GTK/WebKit import checks still run. External
+lsfg-vk 2.x and legally obtained Lossless Scaling are optional and never
+downloaded or modified.
 
 ## Launch games with Zeitop
 

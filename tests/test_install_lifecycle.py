@@ -190,6 +190,121 @@ class TestInstallLifecycle(unittest.TestCase):
         self.assertFalse(self.app.exists())
         self.assertEqual((self.home / "keep.txt").read_text(), "unrelated")
 
+    def fake_distribution(self, distro, *, like="", multiarch=True):
+        """Fake package managers; never run a real sudo/package operation."""
+        fakebin = self.sandbox / ("fakebin-" + distro)
+        fakebin.mkdir()
+        os_release = self.sandbox / ("os-release-" + distro)
+        os_release.write_text(f"ID={distro}\nID_LIKE=\"{like}\"\n")
+        log = self.sandbox / ("packages-" + distro + ".log")
+
+        def tool(name, code):
+            target = fakebin / name
+            target.write_text("#!/bin/sh\n" + code)
+            target.chmod(0o755)
+
+        tool("sudo", 'printf "%s\n" "$*" >> "$ZEITOP_FAKE_PACKAGE_LOG"\n')
+        tool("dpkg", (
+            'case "$1" in\n'
+            '  --print-architecture) echo amd64 ;;\n'
+            '  --print-foreign-architectures) ' +
+            ('echo i386' if multiarch else ':') + ' ;;\n'
+            '  *) exit 41 ;;\n'
+            'esac\n'
+        ))
+        tool("dpkg-query", (
+            'for pkg do :; done\n'
+            '[ "$pkg" = file ] && exit 1\n'
+            'printf "install ok installed"\n'
+        ))
+        tool("apt-get", 'echo "Unexpected direct apt-get invocation" >&2; exit 91\n')
+        tool("rpm", (
+            'test "$1" = -q || exit 41\n'
+            '[ "$2" = file ] && exit 1\n'
+            'exit 0\n'
+        ))
+        tool("dnf", 'echo "Unexpected direct dnf invocation" >&2; exit 91\n')
+        tool("zypper", 'echo "Unexpected direct zypper invocation" >&2; exit 91\n')
+        env = dict(self.env)
+        env["ZEITOP_TEST_OS_RELEASE"] = str(os_release)
+        env["ZEITOP_FAKE_PACKAGE_LOG"] = str(log)
+        env["PATH"] = str(fakebin) + ":" + env["PATH"]
+        return env, log
+
+    def test_ubuntu_installs_only_missing_packages_and_retains_shared_deps(self):
+        env, log = self.fake_distribution("ubuntu", multiarch=True)
+        self.run_script("install.sh", env=env)
+        self.assertEqual((self.app / ".zeitop-dependency-manager").read_text().strip(), "debian")
+        self.assertEqual((self.app / ".zeitop-installed-deps").read_text(), "file\n")
+        self.assertEqual(log.read_text().strip(), "apt-get install --no-install-recommends file")
+        self.assertTrue((self.app / "runtime/vulkan/libzeitop-vulkan32.so").is_file())
+        self.assertTrue((self.app / "runtime/libzeitop-gl32.so").is_file())
+        self.run_script("uninstall.sh", "--remove-deps", env=env)
+        self.assertNotIn("remove", log.read_text())
+        self.assertFalse(self.app.exists())
+        self.assertEqual((self.home / "keep.txt").read_text(), "unrelated")
+
+    def test_ubuntu_requires_explicit_multiarch_before_any_changes(self):
+        env, log = self.fake_distribution("ubuntu-no-i386", like="ubuntu", multiarch=False)
+        failed = self.run_script("install.sh", env=env, success=False)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("sudo dpkg --add-architecture i386", failed.stderr)
+        self.assertFalse(self.app.exists())
+        self.assertFalse(log.exists())
+
+    def test_fedora_installs_only_missing_packages_and_keeps_deps(self):
+        env, log = self.fake_distribution("fedora")
+        self.run_script("install.sh", env=env)
+        self.assertEqual((self.app / ".zeitop-dependency-manager").read_text().strip(), "fedora")
+        self.assertEqual(log.read_text().strip(), "dnf install file")
+        self.run_script("uninstall.sh", "--remove-deps", env=env)
+        self.assertFalse(self.app.exists())
+        self.assertEqual(log.read_text().strip(), "dnf install file")
+
+    def test_opensuse_installs_only_missing_packages_and_keeps_deps(self):
+        env, log = self.fake_distribution("opensuse-tumbleweed")
+        self.run_script("install.sh", env=env)
+        self.assertEqual((self.app / ".zeitop-dependency-manager").read_text().strip(), "opensuse")
+        self.assertEqual(log.read_text().strip(), "zypper install --no-recommends file")
+        self.run_script("uninstall.sh", "--remove-deps", env=env)
+        self.assertFalse(self.app.exists())
+        self.assertEqual(log.read_text().strip(), "zypper install --no-recommends file")
+
+    def test_skip_deps_can_install_with_unknown_distro_when_ready(self):
+        env, log = self.fake_distribution("unsupported-but-prepared")
+        installed = self.run_script("install.sh", "--skip-deps", env=env)
+        self.assertIn("installed successfully", installed.stdout)
+        self.assertTrue((self.app / "runtime/vulkan/libzeitop-output32.so").is_file())
+        self.assertFalse(log.exists())
+        self.run_script("uninstall.sh", env=env)
+        self.assertFalse(self.app.exists())
+
+    def test_multiarch_packages_and_gui_typelibs_are_explicit(self):
+        script = ROOT / "installer-deps.sh"
+        for family, required in (
+            ("arch", ("webkitgtk-6.0", "lib32-vulkan-icd-loader", "lib32-gcc-libs")),
+            ("debian", ("gir1.2-webkit-6.0", "libvulkan1:i386", "gcc-multilib")),
+            ("fedora", ("webkitgtk6.0", "vulkan-loader.i686", "glibc-devel.i686")),
+            ("opensuse", ("typelib-1_0-WebKit-6_0", "libvulkan1-32bit", "gcc-32bit")),
+        ):
+            proc = subprocess.run(
+                ["bash", "-c",
+                 'source "$1"; zeitop_required_packages "$2"; printf "%s\\n" "${zeitop_required[@]}"',
+                 "_", str(script), family],
+                cwd=ROOT, capture_output=True, text=True, timeout=5,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            for package in required:
+                self.assertIn(package, proc.stdout.splitlines(), family)
+
+    def test_unknown_distribution_fails_closed_without_package_changes(self):
+        env, log = self.fake_distribution("unknown-linux")
+        failed = self.run_script("install.sh", env=env, success=False)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("unsupported distribution", failed.stderr)
+        self.assertFalse(self.app.exists())
+        self.assertFalse(log.exists())
+
     def test_first_install_migrates_only_durable_checkout_preferences(self):
         source = self.sandbox / "checkout"
         source.mkdir()
@@ -197,6 +312,7 @@ class TestInstallLifecycle(unittest.TestCase):
             "app.py", "core.py", "fg_config.py", "fg_ipc.py", "fg_live.py",
             "build.sh", "run.sh", "zeitop-run", "install.sh", "uninstall.sh",
             "limiter.c", "vulkan_layer.c", "VERSION", "README.md",
+            "installer-deps.sh",
         ):
             shutil.copy2(ROOT / name, source / name)
         for folder in ("ui", "vendor", "docs"):

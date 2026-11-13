@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install Zeitop for the current Arch Linux user; no system-wide hooks.
+# Install Zeitop per-user on supported Linux distributions; no system-wide hooks.
 set -euo pipefail
 
 source_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -8,8 +8,10 @@ if [[ ${1:-} == --help ]]; then
 Usage: ./install.sh [--skip-deps]
 Installs Zeitop into $XDG_DATA_HOME/zeitop (default ~/.local/share/zeitop),
 with ~/.local/bin/{zeitop,zeitop-run}, a desktop entry, and an icon.
-On Arch Linux, installs missing shared packages via sudo pacman.
---skip-deps: skip pacman operations (for isolated integration tests).
+Detects Arch, Debian/Ubuntu, Fedora, or openSUSE and installs missing
+packages via the distribution's package manager, with sudo as needed.
+On Debian/Ubuntu, i386 multiarch must be enabled separately before install.
+--skip-deps: skip package-manager operations (for isolated integration tests).
 The external lsfg-vk and proprietary Lossless Scaling DLL are never installed.
 HELP
   exit 0
@@ -41,7 +43,7 @@ desktop_file="$desktop_dir/$app_id.desktop"
 icon_file="$icon_dir/$app_id.png"
 managed_token="ZEITOP_MANAGED_INSTALL_V1"
 launcher_token="ZEITOP_MANAGED_LAUNCHER_V1"
-required=(python python-gobject gtk4 webkitgtk-6.0 gcc lib32-gcc-libs file vulkan-icd-loader lib32-vulkan-icd-loader)
+source "$source_root/installer-deps.sh"
 
 # Source and destination must never overlap: do not damage a Git checkout.
 if [[ "$app_dir" == "$source_root" || "$app_dir" == "$source_root/"* ||
@@ -86,22 +88,15 @@ if [[ -e "$icon_file" || -L "$icon_file" ]] && [[ ! -d "$app_dir" ]]; then
 fi
 
 missing=()
+deps_family=""
 if (( ! skip_deps )); then
-  if ! command -v pacman >/dev/null 2>&1; then
-    echo "Zeitop: automatic dependency installation requires Arch Linux (pacman)." >&2
+  if [[ $(uname -m) != x86_64 ]]; then
+    echo "Zeitop: this installer currently supports x86_64 hosts with 32-bit compatibility." >&2
     exit 2
   fi
-  for pkg in "${required[@]}"; do
-    if ! pacman -Q "$pkg" >/dev/null 2>&1; then
-      missing+=("$pkg")
-    fi
-  done
-  if (( ${#missing[@]} )); then
-    echo "Zeitop: missing Arch packages: ${missing[*]}"
-    echo "Zeitop: requesting installation of missing dependencies only."
-    # --asdeps avoids taking ownership of already-installed explicit packages.
-    sudo pacman -S --needed --asdeps -- "${missing[@]}"
-  fi
+  deps_family=$(zeitop_detect_distro)
+  zeitop_install_dependencies "$deps_family"
+  missing=("${zeitop_missing[@]}")
 else
   echo "Zeitop: dependency/package-manager operations skipped for testing."
 fi
@@ -145,7 +140,7 @@ trap cleanup EXIT
 # Explicit application payload: exclude .git, tests, private config, logs and
 # the existing project's runtime (which may contain game session data).
 for file in app.py core.py fg_config.py fg_ipc.py fg_live.py \
-            build.sh run.sh zeitop-run install.sh uninstall.sh limiter.c vulkan_layer.c VERSION README.md; do
+            build.sh run.sh zeitop-run install.sh uninstall.sh installer-deps.sh limiter.c vulkan_layer.c VERSION README.md; do
   cp -p -- "$source_root/$file" "$stage/$file"
 done
 cp -R -- "$source_root/ui" "$source_root/vendor" "$source_root/docs" "$stage/"
@@ -167,9 +162,21 @@ fi
 # Rebuild all native 64/32-bit libraries in the staged, self-contained copy.
 "$stage/build.sh"
 if [[ -d "$app_dir" && -f "$app_dir/.zeitop-installed-deps" ]]; then
-  cp -p -- "$app_dir/.zeitop-installed-deps" "$stage/.zeitop-installed-deps"
+  previous_family=arch  # Old manifests without a marker were Arch-only.
+  if [[ -f "$app_dir/.zeitop-dependency-manager" &&
+        ! -L "$app_dir/.zeitop-dependency-manager" ]]; then
+    previous_family=$(cat "$app_dir/.zeitop-dependency-manager")
+  fi
+  if (( skip_deps )) || [[ "$previous_family" == "$deps_family" ]]; then
+    cp -p -- "$app_dir/.zeitop-installed-deps" "$stage/.zeitop-installed-deps"
+  fi
 fi
-for pkg in "${missing[@]}"; do printf '%s\n' "$pkg" >> "$stage/.zeitop-installed-deps"; done
+if (( ! skip_deps )); then
+  printf '%s\n' "$deps_family" > "$stage/.zeitop-dependency-manager"
+  for pkg in "${missing[@]}"; do printf '%s\n' "$pkg" >> "$stage/.zeitop-installed-deps"; done
+elif [[ -f "$app_dir/.zeitop-dependency-manager" ]]; then
+  cp -p -- "$app_dir/.zeitop-dependency-manager" "$stage/.zeitop-dependency-manager"
+fi
 if [[ -f "$stage/.zeitop-installed-deps" ]]; then
   sort -u "$stage/.zeitop-installed-deps" -o "$stage/.zeitop-installed-deps"
 fi
@@ -213,8 +220,8 @@ Type=Application
 Name=Zeitop
 Comment=Vulkan frame pacing and frame-generation telemetry
 Exec=$desktop_command
-# GNOME requires a resolvable icon; an absolute managed PNG path also
-# works without a user-local hicolor index.theme or fresh icon cache.
+# A directly resolvable PNG works across XDG desktop environments without
+# relying on user-local icon theme indexes or cache refreshes.
 Icon=$icon_file
 Terminal=false
 Categories=Utility;
@@ -229,5 +236,5 @@ cp -- "$app_dir/ui/assets/zeitop-icon.png" "$icon_file"
 echo "Zeitop: installed successfully."
 printf '  Application: %s\n  Launcher: %s\n  Steam wrapper: %s\n  Desktop entry: %s\n' \
   "$app_dir" "$bin_dir/zeitop" "$bin_dir/zeitop-run" "$desktop_file"
-echo "  Use 'zeitop' (or the GNOME application menu) to open the interface."
+echo "  Use 'zeitop' (or your desktop's application menu) to open the interface."
 echo "  External lsfg-vk and Lossless Scaling are separate, optional dependencies."
